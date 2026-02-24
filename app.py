@@ -144,4 +144,65 @@ elif modo == "✅ Corretor de Provas":
                         st.session_state.questoes_prova = json.loads(response.text)
                         st.rerun()
                     except Exception as e:
-                        st.error(f
+                        st.error(f"Erro ao ler prova: {e}")
+
+    # Se já tiver questões extraídas, mostra a interface de resolução
+    if st.session_state.questoes_prova:
+        opcoes = [f"Questão {q['numero']}" for q in st.session_state.questoes_prova]
+        escolha_idx = st.selectbox("Selecione a questão para corrigir:", range(len(opcoes)), format_func=lambda x: opcoes[x])
+        
+        q_atual = st.session_state.questoes_prova[escolha_idx]
+        
+        st.markdown("---")
+        st.subheader(f"Questão {q_atual['numero']}")
+        st.write(q_atual['enunciado'])
+        
+        # Simular alternativas
+        st.radio("Sua resposta:", q_atual['alternativas'], key=f"radio_{escolha_idx}", index=None)
+        
+        if st.button("🧠 Corrigir com Evidência", key=f"btn_corr_{escolha_idx}"):
+            with st.spinner("Consultando UpToDate, Diretrizes e Artigos..."):
+                client = get_client(api_key)
+                prompt_correcao = f"""
+                Corrija esta questão de medicina usando GOOGLE SEARCH.
+                Questão: {q_atual['enunciado']}
+                Alternativas: {q_atual['alternativas']}
+                
+                SAÍDA JSON:
+                {{
+                    "correta": "Texto da alternativa correta",
+                    "analise": [
+                        {{"alt": "A", "status": "Errada", "motivo": "..."}},
+                        {{"alt": "B", "status": "Correta", "motivo": "..."}}
+                    ],
+                    "fontes": "Links/Nomes das diretrizes"
+                }}
+                """
+                try:
+                    resp = client.models.generate_content(
+                        model='gemini-flash-latest',
+                        contents=prompt_correcao,
+                        config=types.GenerateContentConfig(
+                            tools=[types.Tool(google_search=types.GoogleSearch())],
+                            response_mime_type='application/json'
+                        )
+                    )
+                    st.session_state.correcoes[escolha_idx] = json.loads(resp.text)
+                except Exception as e:
+                    st.error(f"Erro na correção: {e}")
+
+        # Mostrar Correção
+        if escolha_idx in st.session_state.correcoes:
+            dados = st.session_state.correcoes[escolha_idx]
+            st.success(f"Gabarito: {dados['correta']}")
+            
+            st.markdown("### 📝 Análise Item a Item")
+            for item in dados['analise']:
+                icone = "✅" if "correta" in item['status'].lower() else "❌"
+                st.markdown(f"**{icone} Alternativa ({item['status']}):** {item['motivo']}")
+            
+            if 'fontes' in dados:
+                st.caption(f"Fontes: {dados['fontes']}")
+
+elif not api_key:
+    st.warning("⚠️ Insira sua API Key na barra lateral para começar.")
