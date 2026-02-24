@@ -5,22 +5,21 @@ from pypdf import PdfReader
 import json
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="MedIA - Estudo Baseado em Evidências", page_icon="🩺")
+st.set_page_config(
+    page_title="MedIA - Plataforma de Estudos", 
+    page_icon="🩺", 
+    layout="wide"
+)
 
-st.title("🩺 MedIA: Gerador de Questões Atualizadas")
-st.markdown("""
-Faça upload de um PDF (artigo, protocolo, diretriz) e a IA criará uma questão de prova,
-**validando com as evidências mais recentes da internet**.
-""")
+# --- ESTADO DA SESSÃO (MEMÓRIA) ---
+if 'questoes_geradas' not in st.session_state:
+    st.session_state.questoes_geradas = []
+if 'questoes_prova' not in st.session_state:
+    st.session_state.questoes_prova = []
+if 'correcoes' not in st.session_state:
+    st.session_state.correcoes = {}
 
-# --- BARRA LATERAL (ONDE FICA A CHAVE) ---
-with st.sidebar:
-    st.header("🔐 Configuração")
-    api_key = st.text_input("Cole sua API Key do Google aqui:", type="password")
-    st.caption("Obtenha sua chave gratuita em [aistudio.google.com](https://aistudio.google.com)")
-    st.warning("Sua chave não é salva. Ela é usada apenas nesta sessão.")
-
-# --- FUNÇÕES ---
+# --- FUNÇÕES AUXILIARES ---
 def extrair_texto_pdf(arquivo):
     leitor = PdfReader(arquivo)
     texto = ""
@@ -28,89 +27,121 @@ def extrair_texto_pdf(arquivo):
         texto += pagina.extract_text() + "\n"
     return texto
 
-def gerar_questao(texto_base, chave):
-    if not chave:
-        return {"erro": "Chave de API não fornecida."}
-        
-    client = genai.Client(api_key=chave)
-    
-    prompt = f'''
-    Você é um preceptor de residência médica rigoroso.
-    
-    CONTEXTO:
-    O usuário enviou um texto base (extraído de PDF).
-    
-    SUA MISSÃO:
-    1. Leia o texto do usuário.
-    2. USE A FERRAMENTA DE BUSCA (Google Search) para encontrar as diretrizes e protocolos mais recentes (2024/2025/2026) sobre o tema.
-    3. Crie uma questão de múltipla escolha difícil (nível prova de título).
-    4. No comentário, CONFRONTE o texto do usuário com o que você achou na internet.
-    
-    TEXTO DO USUÁRIO:
-    "{texto_base}"
-    '''
+def get_client(api_key):
+    return genai.Client(api_key=api_key)
 
-    try:
-        # Usando o alias que sabemos que funciona
-        response = client.models.generate_content(
-            model='gemini-flash-latest', 
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-                response_mime_type='application/json',
-                response_schema={
-                    "type": "OBJECT",
-                    "properties": {
-                        "tema_identificado": {"type": "STRING"},
-                        "enunciado": {"type": "STRING"},
-                        "alternativas": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "A": {"type": "STRING"},
-                                "B": {"type": "STRING"},
-                                "C": {"type": "STRING"},
-                                "D": {"type": "STRING"}
-                            }
-                        },
-                        "resposta_correta": {"type": "STRING"},
-                        "comentario_baseado_em_evidencias": {"type": "STRING"},
-                        "fontes_externas_encontradas": {"type": "STRING"}
-                    }
-                }
-            )
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        return {"erro": str(e)}
+# --- MENU LATERAL ---
+with st.sidebar:
+    st.title("🩺 MedIA")
+    api_key = st.text_input("Cole sua API Key do Google:", type="password")
+    
+    st.markdown("---")
+    modo = st.radio("Escolha o Modo:", ["📝 Gerador de Questões", "✅ Corretor de Provas"])
+    
+    st.markdown("---")
+    if st.button("🧹 Limpar Tudo"):
+        st.session_state.questoes_geradas = []
+        st.session_state.questoes_prova = []
+        st.session_state.correcoes = {}
+        st.rerun()
 
-# --- INTERFACE PRINCIPAL ---
-uploaded_file = st.file_uploader("Arraste seu PDF aqui", type="pdf")
-
-if uploaded_file:
-    if not api_key:
-        st.error("⚠️ Por favor, cole sua API Key na barra lateral esquerda para começar.")
-    else:
-        if st.button("Gerar Questão Baseada em Evidência"):
-            with st.spinner('Lendo PDF e pesquisando protocolos atualizados na web...'):
-                texto = extrair_texto_pdf(uploaded_file)
-                resultado = gerar_questao(texto, api_key)
+# --- MODO 1: GERADOR DE QUESTÕES ---
+if modo == "📝 Gerador de Questões":
+    st.header("Gerador de Questões Baseado em Evidências")
+    st.markdown("Envie um PDF (resumo, artigo) e a IA criará questões inéditas validando com a internet.")
+    
+    arquivo_gerador = st.file_uploader("Upload do PDF para Base", type="pdf", key="upl_gerador")
+    
+    col1, col2 = st.columns(2)
+    qtd_questoes = col1.slider("Quantidade de Questões", 1, 5, 1)
+    dificuldade = col2.selectbox("Nível de Dificuldade", ["Internato (Médio)", "Residência Médica (Difícil)", "Prova de Título/R3 (Muito Difícil)"])
+    
+    if arquivo_gerador and api_key:
+        if st.button("🚀 Gerar Questões"):
+            with st.spinner("Lendo PDF e pesquisando diretrizes atualizadas..."):
+                texto = extrair_texto_pdf(arquivo_gerador)
+                client = get_client(api_key)
                 
-                if "erro" in resultado:
-                    st.error(f"Ocorreu um erro: {resultado['erro']}")
-                else:
-                    st.success(f"Tema: {resultado['tema_identificado']}")
-                    st.subheader("📝 Questão")
-                    st.write(resultado['enunciado'])
-                    
-                    opts = resultado['alternativas']
-                    st.info(f"A) {opts['A']}")
-                    st.info(f"B) {opts['B']}")
-                    st.info(f"C) {opts['C']}")
-                    st.info(f"D) {opts['D']}")
-                    
-                    with st.expander("Ver Gabarito e Comentários"):
-                        st.markdown(f"**Resposta Correta:** {resultado['resposta_correta']}")
-                        st.markdown(f"### 💡 Análise Baseada em Evidências")
-                        st.write(resultado['comentario_baseado_em_evidencias'])
-                        if resultado.get('fontes_externas_encontradas'):
-                            st.caption(f"Fontes: {resultado['fontes_externas_encontradas']}")
+                prompt = f"""
+                Você é um examinador de banca de residência médica.
+                
+                CONTEXTO:
+                O usuário enviou um texto base.
+                
+                SUA MISSÃO:
+                1. Crie {qtd_questoes} questões de múltipla escolha.
+                2. Nível de Dificuldade: {dificuldade}.
+                3. USE A BUSCA DO GOOGLE para garantir que o gabarito esteja de acordo com as diretrizes mais recentes (2024/2025).
+                4. Confronte o texto do usuário com a literatura atual no comentário.
+                
+                TEXTO BASE:
+                "{texto[:30000]}"
+                
+                FORMATO JSON OBRIGATÓRIO (LISTA DE OBJETOS):
+                [
+                    {{
+                        "enunciado": "...",
+                        "alternativas": {{ "A": "...", "B": "...", "C": "...", "D": "..." }},
+                        "resposta_correta": "A",
+                        "comentario": "Explicação citando fontes..."
+                    }}
+                ]
+                """
+                
+                try:
+                    response = client.models.generate_content(
+                        model='gemini-flash-latest',
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            tools=[types.Tool(google_search=types.GoogleSearch())],
+                            response_mime_type='application/json'
+                        )
+                    )
+                    st.session_state.questoes_geradas = json.loads(response.text)
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+
+    # Exibir Questões Geradas
+    if st.session_state.questoes_geradas:
+        for i, q in enumerate(st.session_state.questoes_geradas):
+            with st.expander(f"Questão {i+1}: {q.get('enunciado', '')[:50]}...", expanded=True):
+                st.write(q['enunciado'])
+                st.info(f"A) {q['alternativas']['A']}")
+                st.info(f"B) {q['alternativas']['B']}")
+                st.info(f"C) {q['alternativas']['C']}")
+                st.info(f"D) {q['alternativas']['D']}")
+                
+                if st.button(f"Ver Gabarito Q{i+1}", key=f"gab_{i}"):
+                    st.success(f"Correta: {q['resposta_correta']}")
+                    st.warning(f"Comentário: {q['comentario']}")
+
+# --- MODO 2: CORRETOR DE PROVAS ---
+elif modo == "✅ Corretor de Provas":
+    st.header("Corretor de Provas com IA")
+    st.markdown("Envie uma prova (PDF). A IA vai identificar as questões e corrigir cada alternativa usando a internet.")
+    
+    arquivo_prova = st.file_uploader("Upload da Prova", type="pdf", key="upl_prova")
+    
+    if arquivo_prova and api_key:
+        # Botão para extrair questões do PDF
+        if not st.session_state.questoes_prova:
+            if st.button("🔍 Identificar Questões"):
+                with st.spinner("Analisando estrutura da prova..."):
+                    texto = extrair_texto_pdf(arquivo_prova)
+                    client = get_client(api_key)
+                    prompt = f"""
+                    Extraia as questões deste texto de prova.
+                    Retorne uma lista JSON.
+                    Texto: "{texto[:30000]}"
+                    Formato: [{{ "numero": 1, "enunciado": "...", "alternativas": ["..."] }}]
+                    """
+                    try:
+                        response = client.models.generate_content(
+                            model='gemini-flash-latest',
+                            contents=prompt,
+                            config=types.GenerateContentConfig(response_mime_type='application/json')
+                        )
+                        st.session_state.questoes_prova = json.loads(response.text)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f
