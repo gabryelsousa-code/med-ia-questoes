@@ -6,8 +6,8 @@ import json
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="MedIA - Plataforma de Estudos", 
-    page_icon="🩺", 
+    page_title="MedIA - Estratégia de Estudos", 
+    page_icon="🦉", 
     layout="wide"
 )
 
@@ -62,6 +62,7 @@ if modo == "📝 Gerador de Questões":
                 texto = extrair_texto_pdf(arquivo_gerador)
                 client = get_client(api_key)
                 
+                # Prompt atualizado para buscar fontes confiáveis também na geração
                 prompt = f"""
                 Você é um examinador de banca de residência médica.
                 
@@ -72,7 +73,7 @@ if modo == "📝 Gerador de Questões":
                 1. Crie {qtd_questoes} questões de múltipla escolha.
                 2. Nível de Dificuldade: {dificuldade}.
                 3. USE A BUSCA DO GOOGLE para garantir que o gabarito esteja de acordo com as diretrizes mais recentes (2024/2025).
-                4. Confronte o texto do usuário com a literatura atual no comentário.
+                4. Priorize citar fontes brasileiras (SBC, SBP, FEBRASGO, Ministério da Saúde) ou grandes portais como Estratégia MED e PEBMED.
                 
                 TEXTO BASE:
                 "{texto[:30000]}"
@@ -117,8 +118,8 @@ if modo == "📝 Gerador de Questões":
 
 # --- MODO 2: CORRETOR DE PROVAS ---
 elif modo == "✅ Corretor de Provas":
-    st.header("Corretor de Provas com IA")
-    st.markdown("Envie uma prova (PDF). A IA vai identificar as questões e corrigir cada alternativa usando a internet.")
+    st.header("Corretor de Provas com IA (Foco Estratégia MED)")
+    st.markdown("Envie uma prova (PDF). A IA vai identificar as questões e corrigir cada alternativa usando a internet, **priorizando o Estratégia MED e Diretrizes Oficiais**.")
     
     arquivo_prova = st.file_uploader("Upload da Prova", type="pdf", key="upl_prova")
     
@@ -160,24 +161,36 @@ elif modo == "✅ Corretor de Provas":
         # Simular alternativas
         st.radio("Sua resposta:", q_atual['alternativas'], key=f"radio_{escolha_idx}", index=None)
         
-        if st.button("🧠 Corrigir com Evidência", key=f"btn_corr_{escolha_idx}"):
-            with st.spinner("Consultando UpToDate, Diretrizes e Artigos..."):
+        if st.button("🧠 Corrigir com Estratégia/Evidência", key=f"btn_corr_{escolha_idx}"):
+            with st.spinner("Consultando Blog Estratégia MED, PEBMED e Diretrizes..."):
                 client = get_client(api_key)
+                
+                # --- PROMPT ATUALIZADO COM SUA SOLICITAÇÃO ---
                 prompt_correcao = f"""
-                Corrija esta questão de medicina usando GOOGLE SEARCH.
-                Questão: {q_atual['enunciado']}
+                Você é um professor especialista corrigindo uma prova de residência médica.
+                
+                QUESTÃO A SER CORRIGIDA:
+                Enunciado: {q_atual['enunciado']}
                 Alternativas: {q_atual['alternativas']}
                 
-                SAÍDA JSON:
+                SUA MISSÃO DE PESQUISA (GOOGLE SEARCH):
+                1. Pesquise a resolução desta questão ou o tema clínico dela.
+                2. PRIORIDADE MÁXIMA: Busque por resoluções ou artigos nos sites "estrategiamed.com.br" ou "blog.estrategiamed.com.br".
+                3. SEGUNDA OPÇÃO: Busque em "pebmed.com.br" ou Diretrizes de Sociedades Brasileiras (SBC, SBP, FEBRASGO, CBMI).
+                4. TERCEIRA OPÇÃO: UpToDate ou MSD Manuals.
+                
+                SAÍDA OBRIGATÓRIA (JSON):
                 {{
                     "correta": "Texto da alternativa correta",
                     "analise": [
-                        {{"alt": "A", "status": "Errada", "motivo": "..."}},
-                        {{"alt": "B", "status": "Correta", "motivo": "..."}}
+                        {{"alt": "A", "status": "Correta/Incorreta", "motivo": "Explicação detalhada..."}},
+                        {{"alt": "B", "status": "Correta/Incorreta", "motivo": "Explicação detalhada..."}},
+                        ... (faça para todas)
                     ],
-                    "fontes": "Links/Nomes das diretrizes"
+                    "fontes": "Liste os links encontrados (ex: 'Blog Estratégia MED: Manejo da SEPSE...')"
                 }}
                 """
+                
                 try:
                     resp = client.models.generate_content(
                         model='gemini-flash-latest',
@@ -194,15 +207,21 @@ elif modo == "✅ Corretor de Provas":
         # Mostrar Correção
         if escolha_idx in st.session_state.correcoes:
             dados = st.session_state.correcoes[escolha_idx]
-            st.success(f"Gabarito: {dados['correta']}")
             
-            st.markdown("### 📝 Análise Item a Item")
-            for item in dados['analise']:
-                icone = "✅" if "correta" in item['status'].lower() else "❌"
-                st.markdown(f"**{icone} Alternativa ({item['status']}):** {item['motivo']}")
+            # Caixa de destaque para a resposta correta
+            st.success(f"**Gabarito Oficial:** {dados['correta']}")
             
             if 'fontes' in dados:
-                st.caption(f"Fontes: {dados['fontes']}")
+                st.info(f"📚 **Fontes Consultadas:** {dados['fontes']}")
+            
+            st.markdown("### 📝 Comentários por Alternativa")
+            for item in dados['analise']:
+                icone = "✅" if "correta" in item['status'].lower() else "❌"
+                # Formatação visual para facilitar a leitura
+                st.markdown(f"""
+                **{icone} Alternativa {item.get('alt', '')} ({item['status']})** {item['motivo']}
+                """)
+                st.divider()
 
 elif not api_key:
     st.warning("⚠️ Insira sua API Key na barra lateral para começar.")
