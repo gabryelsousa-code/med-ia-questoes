@@ -20,6 +20,7 @@ if 'resposta_mostrada' not in st.session_state: st.session_state.resposta_mostra
 # Admin
 if 'admin_pagina_atual' not in st.session_state: st.session_state.admin_pagina_atual = 1
 if 'admin_editando_id' not in st.session_state: st.session_state.admin_editando_id = None
+if 'ids_pagina_atual' not in st.session_state: st.session_state.ids_pagina_atual = []
 
 # --- FUNÇÕES ---
 def init_supabase():
@@ -42,6 +43,15 @@ def ordenar_alternativas(alternativas):
     if set(chaves_upper) == {'V', 'F'}:
          return sorted(chaves, key=lambda x: 0 if x.upper() == 'V' else 1)
     return sorted(chaves)
+
+# --- CALLBACK PARA SELECIONAR TUDO ---
+def callback_selecionar_tudo():
+    # Pega o valor atual do checkbox Mestre
+    estado_mestre = st.session_state.chk_master
+    # Força esse valor em todos os IDs da página atual
+    if 'ids_pagina_atual' in st.session_state:
+        for q_id in st.session_state.ids_pagina_atual:
+            st.session_state[f"sel_{q_id}"] = estado_mestre
 
 # --- CONEXÃO AUTOMÁTICA ---
 if not st.session_state.supabase:
@@ -137,11 +147,9 @@ elif pagina == "📝 Resolver Questões":
             st.rerun()
 
         st.markdown(f"#### {q['enunciado']}")
-        
         alts = q.get('alternativas', {})
         chaves = ordenar_alternativas(alts)
         opts = [f"{k}) {alts[k]}" for k in chaves]
-        
         escolha = st.radio("Resposta:", opts, index=None, key=f"r_{q['id']}")
         
         if st.button("✅ Confirmar"):
@@ -151,12 +159,9 @@ elif pagina == "📝 Resolver Questões":
             letra = escolha.split(")")[0]
             gab = q.get('gabarito', '').strip().upper()
             st.divider()
-            if letra.upper() == gab:
-                st.success("CORRETO! 🎉")
-            else:
-                st.error(f"ERRADO. Gabarito: **{gab}**")
+            if letra.upper() == gab: st.success("CORRETO! 🎉")
+            else: st.error(f"ERRADO. Gabarito: **{gab}**")
             st.info(f"💡 {q.get('comentario', 'Sem comentário.')}")
-
     elif st.session_state.get('questoes_carregadas') == []:
         st.info("Clique em Carregar Questões.")
 
@@ -169,143 +174,111 @@ elif pagina == "⚙️ Gerenciar Questões":
     if not st.session_state.supabase:
         st.error("Banco desconectado."); st.stop()
 
-    # --- MODO DE EDIÇÃO INDIVIDUAL ---
+    # --- MODO EDIÇÃO ---
     if st.session_state.admin_editando_id:
         res_edit = st.session_state.supabase.table("banco_questoes").select("*").eq("id", st.session_state.admin_editando_id).execute()
-        
         if res_edit.data:
             q_edit = res_edit.data[0]
             st.info(f"Editando Questão ID: {q_edit['id']}")
             
             with st.form("form_edicao"):
-                col_a, col_b = st.columns(2)
-                novo_disc = col_a.text_input("Disciplina", q_edit.get('disciplina'))
-                novo_assunto = col_b.text_input("Assunto", q_edit.get('assunto'))
-                
-                novo_enunciado = st.text_area("Enunciado", q_edit.get('enunciado'), height=150)
-                
-                st.markdown("**Alternativas (JSON):**")
+                c_disc, c_ass = st.columns(2)
+                novo_disc = c_disc.text_input("Disciplina", q_edit.get('disciplina'))
+                novo_ass = c_ass.text_input("Assunto", q_edit.get('assunto'))
+                novo_enun = st.text_area("Enunciado", q_edit.get('enunciado'), height=150)
                 alt_str = json.dumps(q_edit.get('alternativas', {}), indent=2, ensure_ascii=False)
                 novo_alt_str = st.text_area("JSON Alternativas", alt_str, height=200)
                 
-                col_c, col_d = st.columns(2)
-                novo_gabarito = col_c.text_input("Gabarito", q_edit.get('gabarito'))
-                novo_comentario = st.text_area("Comentário", q_edit.get('comentario'), height=100)
+                c_gab, c_com = st.columns(2)
+                novo_gab = c_gab.text_input("Gabarito", q_edit.get('gabarito'))
+                novo_com = c_com.text_input("Comentário", q_edit.get('comentario'))
                 
-                c1, c2, c3 = st.columns([2, 1, 2])
-                
-                if c1.form_submit_button("💾 Salvar Alterações"):
+                col_btn1, col_btn2, col_btn3 = st.columns([2, 1, 2])
+                if col_btn1.form_submit_button("💾 Salvar"):
                     try:
                         novas_alts = json.loads(novo_alt_str)
-                        update_data = {
-                            "disciplina": novo_disc, "assunto": novo_assunto,
-                            "enunciado": novo_enunciado, "alternativas": novas_alts,
-                            "gabarito": novo_gabarito, "comentario": novo_comentario
-                        }
-                        st.session_state.supabase.table("banco_questoes").update(update_data).eq("id", q_edit['id']).execute()
-                        st.success("Salvo!"); time.sleep(0.5)
-                        st.session_state.admin_editando_id = None
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro JSON: {e}")
+                        upd = {"disciplina": novo_disc, "assunto": novo_ass, "enunciado": novo_enun, "alternativas": novas_alts, "gabarito": novo_gab, "comentario": novo_com}
+                        st.session_state.supabase.table("banco_questoes").update(upd).eq("id", q_edit['id']).execute()
+                        st.success("Salvo!"); st.session_state.admin_editando_id = None; time.sleep(0.5); st.rerun()
+                    except: st.error("Erro JSON")
                 
-                if c2.form_submit_button("❌ Cancelar"):
-                    st.session_state.admin_editando_id = None
-                    st.rerun()
-                
-                if c3.form_submit_button("🗑️ EXCLUIR QUESTÃO", type="primary"):
-                    try:
-                        st.session_state.supabase.table("banco_questoes").delete().eq("id", q_edit['id']).execute()
-                        st.toast(f"Questão {q_edit['id']} deletada!")
-                        st.session_state.admin_editando_id = None
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao excluir: {e}")
+                if col_btn2.form_submit_button("❌ Cancelar"):
+                    st.session_state.admin_editando_id = None; st.rerun()
+
+                if col_btn3.form_submit_button("🗑️ DELETAR", type="primary"):
+                    st.session_state.supabase.table("banco_questoes").delete().eq("id", q_edit['id']).execute()
+                    st.session_state.admin_editando_id = None; st.rerun()
 
     # --- MODO LISTAGEM ---
     else:
-        # 1. Filtros e Paginação
-        col_filtro1, col_filtro2 = st.columns([3, 1])
-        ordem = col_filtro1.selectbox("Ordenar por:", ["Mais Recentes", "Mais Antigas", "Ordem Alfabética"])
+        # Filtros e Paginação
+        c_ordem, c_nav = st.columns([1, 2])
+        ordem = c_ordem.selectbox("Ordem:", ["Recentes", "Antigas", "Alfabética"])
         
-        ITENS_POR_PAGINA = 50
+        ITENS_PAG = 50
         try:
-            count_res = st.session_state.supabase.table("banco_questoes").select("id", count='exact').execute()
-            total_paginas = math.ceil(count_res.count / ITENS_POR_PAGINA)
-        except: total_paginas = 1
+            cnt = st.session_state.supabase.table("banco_questoes").select("id", count='exact').execute()
+            tot_pag = math.ceil(cnt.count / ITENS_PAG)
+        except: tot_pag = 1
 
-        col_nav1, col_nav2, col_nav3 = st.columns([1, 3, 1])
-        if col_nav1.button("⬅️ Anterior") and st.session_state.admin_pagina_atual > 1:
-            st.session_state.admin_pagina_atual -= 1; st.rerun()
-        col_nav2.markdown(f"<center>Pág. <b>{st.session_state.admin_pagina_atual}</b> de {total_paginas}</center>", unsafe_allow_html=True)
-        if col_nav3.button("Próxima ➡️") and st.session_state.admin_pagina_atual < total_paginas:
-            st.session_state.admin_pagina_atual += 1; st.rerun()
+        with c_nav:
+            cn1, cn2, cn3 = st.columns([1,2,1])
+            if cn1.button("⬅️") and st.session_state.admin_pagina_atual > 1:
+                st.session_state.admin_pagina_atual -= 1; st.rerun()
+            cn2.write(f"<center>{st.session_state.admin_pagina_atual} / {tot_pag}</center>", unsafe_allow_html=True)
+            if cn3.button("➡️") and st.session_state.admin_pagina_atual < tot_pag:
+                st.session_state.admin_pagina_atual += 1; st.rerun()
 
         st.markdown("---")
 
-        # 2. Busca Dados
-        offset_start = (st.session_state.admin_pagina_atual - 1) * ITENS_POR_PAGINA
-        query = st.session_state.supabase.table("banco_questoes").select("*")
+        # Busca Dados
+        off = (st.session_state.admin_pagina_atual - 1) * ITENS_PAG
+        qry = st.session_state.supabase.table("banco_questoes").select("*")
+        if "Recentes" in ordem: qry = qry.order("id", desc=True)
+        elif "Antigas" in ordem: qry = qry.order("id", desc=False)
+        else: qry = qry.order("enunciado", desc=False)
         
-        if "Mais Recentes" in ordem: query = query.order("id", desc=True)
-        elif "Mais Antigas" in ordem: query = query.order("id", desc=False)
-        elif "Alfabética" in ordem: query = query.order("enunciado", desc=False)
-            
-        lista_questoes = query.range(offset_start, offset_start + ITENS_POR_PAGINA - 1).execute().data
+        lista = qry.range(off, off + ITENS_PAG - 1).execute().data
+        
+        # Salva IDs da página atual para o callback funcionar
+        st.session_state.ids_pagina_atual = [q['id'] for q in lista] if lista else []
 
-        # 3. CONTAINER DE AÇÃO NO TOPO
-        container_acoes = st.container()
-        
-        # 4. Checkbox de "Selecionar Todos"
-        selecionar_tudo = st.checkbox(f"Selecionar todas as {len(lista_questoes)} questões desta página")
+        # CONTAINER PARA AÇÕES EM MASSA (NO TOPO)
+        container_topo = st.container()
+
+        # Checkbox Mestre (Com Callback para funcionar de verdade)
+        st.checkbox("Selecionar Todos desta Página", key="chk_master", on_change=callback_selecionar_tudo)
         
         st.divider()
 
-        # 5. Lista com Checkboxes Individuais
-        ids_para_excluir = []
-        
-        if lista_questoes:
-            for q in lista_questoes:
-                # Layout: Checkbox | Texto | Editar | Excluir
-                c_check, c_texto, c_edit, c_del = st.columns([0.5, 8, 1, 1])
+        # Lista
+        ids_selecionados = []
+        if lista:
+            for q in lista:
+                # Layout Ajustado: Checkbox | Texto | Editar | Excluir
+                c_chk, c_txt, c_edt, c_del = st.columns([0.5, 10, 0.7, 0.7])
                 
-                # O checkbox individual já vem marcado se "selecionar_tudo" for True
-                # Usamos o ID da questão na Key para ser único
-                if c_check.checkbox("", value=selecionar_tudo, key=f"sel_{q['id']}"):
-                    ids_para_excluir.append(q['id'])
+                # Checkbox Individual
+                if c_chk.checkbox("", key=f"sel_{q['id']}"):
+                    ids_selecionados.append(q['id'])
                 
-                texto_resumo = f"**[{q['id']}]** {q.get('disciplina')} - {q.get('enunciado')[:80]}..."
-                c_texto.markdown(texto_resumo)
+                c_txt.markdown(f"**[{q['id']}]** {q.get('disciplina')} - {q.get('enunciado')[:90]}...")
                 
-                if c_edit.button("✏️", key=f"btn_edit_{q['id']}"):
-                    st.session_state.admin_editando_id = q['id']
-                    st.rerun()
+                if c_edt.button("✏️", key=f"ed_{q['id']}", help="Editar"):
+                    st.session_state.admin_editando_id = q['id']; st.rerun()
                 
-                # Botão de Excluir Individual (Aparece em cada linha)
-                if c_del.button("🗑️", key=f"btn_del_{q['id']}", help="Excluir esta questão"):
-                    try:
-                        st.session_state.supabase.table("banco_questoes").delete().eq("id", q['id']).execute()
-                        st.toast(f"Questão {q['id']} removida.")
-                        time.sleep(0.5)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro: {e}")
+                if c_del.button("🗑️", key=f"dl_{q['id']}", help="Excluir"):
+                    st.session_state.supabase.table("banco_questoes").delete().eq("id", q['id']).execute()
+                    st.toast("Deletado!"); time.sleep(0.5); st.rerun()
                 
                 st.divider()
-
-        # 6. Preenche o Container do Topo SE houver seleção
-        if ids_para_excluir:
-            with container_acoes:
-                st.error(f"⚠️ **{len(ids_para_excluir)} ITENS SELECIONADOS**")
-                if st.button("🗑️ EXCLUIR SELECIONADOS AGORA", type="primary"):
-                    try:
-                        st.session_state.supabase.table("banco_questoes").delete().in_("id", ids_para_excluir).execute()
-                        st.success("Itens excluídos com sucesso!")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao excluir em lote: {e}")
         else:
-            with container_acoes:
-                st.info("Selecione itens abaixo para ver as ações em massa.")
+            st.info("Vazio.")
+
+        # ATUALIZA O CONTAINER DO TOPO SE HOUVER SELEÇÃO
+        if ids_selecionados:
+            with container_topo:
+                st.error(f"⚠️ **{len(ids_selecionados)} ITENS MARCADOS PARA EXCLUSÃO**")
+                if st.button("🗑️ EXCLUIR SELECIONADOS AGORA", type="primary"):
+                    st.session_state.supabase.table("banco_questoes").delete().in_("id", ids_selecionados).execute()
+                    st.success("Excluídos!"); time.sleep(1); st.rerun()
