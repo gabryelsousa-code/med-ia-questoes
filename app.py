@@ -13,13 +13,14 @@ st.set_page_config(
 
 # --- ESTADO DA SESSÃO ---
 if 'supabase' not in st.session_state: st.session_state.supabase = None
-# Estados de Navegação do Aluno
+# Aluno
 if 'indice_questao' not in st.session_state: st.session_state.indice_questao = 0
 if 'questoes_carregadas' not in st.session_state: st.session_state.questoes_carregadas = []
 if 'resposta_mostrada' not in st.session_state: st.session_state.resposta_mostrada = False
-# Estados do Admin
+# Admin
 if 'admin_pagina_atual' not in st.session_state: st.session_state.admin_pagina_atual = 1
 if 'admin_editando_id' not in st.session_state: st.session_state.admin_editando_id = None
+if 'selecionados_para_exclusao' not in st.session_state: st.session_state.selecionados_para_exclusao = []
 
 # --- FUNÇÕES ---
 def init_supabase():
@@ -88,8 +89,7 @@ elif pagina == "📝 Resolver Questões":
     st.header("Simulador de Prova")
     
     if not st.session_state.supabase:
-        st.warning("Banco desconectado.")
-        st.stop()
+        st.warning("Banco desconectado."); st.stop()
 
     col1, col2 = st.columns(2)
     if 'lista_disciplinas' not in st.session_state:
@@ -138,11 +138,9 @@ elif pagina == "📝 Resolver Questões":
             st.rerun()
 
         st.markdown(f"#### {q['enunciado']}")
-        
         alts = q.get('alternativas', {})
         chaves = ordenar_alternativas(alts)
         opts = [f"{k}) {alts[k]}" for k in chaves]
-        
         escolha = st.radio("Resposta:", opts, index=None, key=f"r_{q['id']}")
         
         if st.button("✅ Confirmar"):
@@ -152,12 +150,9 @@ elif pagina == "📝 Resolver Questões":
             letra = escolha.split(")")[0]
             gab = q.get('gabarito', '').strip().upper()
             st.divider()
-            if letra.upper() == gab:
-                st.success("CORRETO! 🎉")
-            else:
-                st.error(f"ERRADO. Gabarito: **{gab}**")
+            if letra.upper() == gab: st.success("CORRETO! 🎉")
+            else: st.error(f"ERRADO. Gabarito: **{gab}**")
             st.info(f"💡 {q.get('comentario', 'Sem comentário.')}")
-
     elif st.session_state.get('questoes_carregadas') == []:
         st.info("Clique em Carregar Questões.")
 
@@ -170,9 +165,8 @@ elif pagina == "⚙️ Gerenciar Questões":
     if not st.session_state.supabase:
         st.error("Banco desconectado."); st.stop()
 
-    # --- LÓGICA DE EDIÇÃO (Se estiver editando, mostra form. Se não, mostra lista) ---
+    # --- MODO DE EDIÇÃO INDIVIDUAL ---
     if st.session_state.admin_editando_id:
-        # Busca os dados frescos da questão
         res_edit = st.session_state.supabase.table("banco_questoes").select("*").eq("id", st.session_state.admin_editando_id).execute()
         
         if res_edit.data:
@@ -194,9 +188,10 @@ elif pagina == "⚙️ Gerenciar Questões":
                 novo_gabarito = col_c.text_input("Gabarito", q_edit.get('gabarito'))
                 novo_comentario = st.text_area("Comentário", q_edit.get('comentario'), height=100)
                 
-                # Botões do Form
-                c1, c2 = st.columns([1, 6])
-                if c1.form_submit_button("💾 Salvar"):
+                c1, c2, c3 = st.columns([2, 1, 2])
+                
+                # Botão Salvar
+                if c1.form_submit_button("💾 Salvar Alterações"):
                     try:
                         novas_alts = json.loads(novo_alt_str)
                         update_data = {
@@ -206,88 +201,106 @@ elif pagina == "⚙️ Gerenciar Questões":
                         }
                         st.session_state.supabase.table("banco_questoes").update(update_data).eq("id", q_edit['id']).execute()
                         st.success("Salvo!"); time.sleep(0.5)
-                        st.session_state.admin_editando_id = None # Sai do modo edição
+                        st.session_state.admin_editando_id = None
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro JSON: {e}")
                 
+                # Botão Cancelar
                 if c2.form_submit_button("❌ Cancelar"):
                     st.session_state.admin_editando_id = None
                     st.rerun()
-
-    else:
-        # --- LISTAGEM E FILTROS ---
-        col_filtro1, col_filtro2 = st.columns([3, 1])
-        ordem = col_filtro1.selectbox("Ordenar por:", ["Mais Recentes (Inclusão)", "Mais Antigas", "Ordem Alfabética (Enunciado)"])
-        
-        # Paginação
-        ITENS_POR_PAGINA = 50
-        
-        # Query Base para Contagem
-        try:
-            # Pega contagem total (count='exact')
-            count_res = st.session_state.supabase.table("banco_questoes").select("id", count='exact').execute()
-            total_items = count_res.count
-            total_paginas = math.ceil(total_items / ITENS_POR_PAGINA)
-        except:
-            total_items = 0; total_paginas = 1
-
-        # Navegação de Páginas
-        col_nav1, col_nav2, col_nav3 = st.columns([1, 3, 1])
-        if col_nav1.button("⬅️ Página Anterior") and st.session_state.admin_pagina_atual > 1:
-            st.session_state.admin_pagina_atual -= 1
-            st.rerun()
-            
-        col_nav2.markdown(f"<center>Página <b>{st.session_state.admin_pagina_atual}</b> de {total_paginas}<br><small>Total: {total_items} questões</small></center>", unsafe_allow_html=True)
-        
-        if col_nav3.button("Próxima Página ➡️") and st.session_state.admin_pagina_atual < total_paginas:
-            st.session_state.admin_pagina_atual += 1
-            st.rerun()
-
-        st.markdown("---")
-
-        # --- BUSCA OS DADOS DA PÁGINA ATUAL ---
-        offset_start = (st.session_state.admin_pagina_atual - 1) * ITENS_POR_PAGINA
-        offset_end = offset_start + (ITENS_POR_PAGINA - 1)
-        
-        query = st.session_state.supabase.table("banco_questoes").select("*")
-        
-        # Aplica Ordenação
-        if "Mais Recentes" in ordem:
-            query = query.order("id", desc=True) # ID geralmente reflete inserção
-        elif "Mais Antigas" in ordem:
-            query = query.order("id", desc=False)
-        elif "Alfabética" in ordem:
-            query = query.order("enunciado", desc=False)
-            
-        # Aplica Paginação (Range)
-        lista_questoes = query.range(offset_start, offset_end).execute().data
-
-        # --- EXIBIÇÃO DA LISTA ---
-        if lista_questoes:
-            for q in lista_questoes:
-                # Layout da Linha
-                c_texto, c_edit, c_del = st.columns([8, 1, 1])
                 
-                # Resumo do texto
-                texto_resumo = f"**[{q.get('id')}]** {q.get('disciplina')} - {q.get('enunciado')[:80]}..."
-                c_texto.markdown(texto_resumo)
-                
-                # Botão Editar
-                if c_edit.button("✏️", key=f"edit_{q['id']}", help="Editar Questão"):
-                    st.session_state.admin_editando_id = q['id']
-                    st.rerun()
-                
-                # Botão Excluir
-                if c_del.button("🗑️", key=f"del_{q['id']}", help="Excluir Definitivamente"):
+                # Botão Excluir (Dentro da Edição)
+                if c3.form_submit_button("🗑️ EXCLUIR ESTA QUESTÃO", type="primary"):
                     try:
-                        st.session_state.supabase.table("banco_questoes").delete().eq("id", q['id']).execute()
-                        st.toast(f"Questão {q['id']} deletada!")
+                        st.session_state.supabase.table("banco_questoes").delete().eq("id", q_edit['id']).execute()
+                        st.toast(f"Questão {q_edit['id']} deletada!")
+                        st.session_state.admin_editando_id = None
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Erro: {e}")
+                        st.error(f"Erro ao excluir: {e}")
+
+    # --- MODO LISTAGEM E EXCLUSÃO EM MASSA ---
+    else:
+        # Filtros e Paginação
+        col_filtro1, col_filtro2 = st.columns([3, 1])
+        ordem = col_filtro1.selectbox("Ordenar por:", ["Mais Recentes", "Mais Antigas", "Ordem Alfabética"])
+        
+        ITENS_POR_PAGINA = 50
+        try:
+            count_res = st.session_state.supabase.table("banco_questoes").select("id", count='exact').execute()
+            total_paginas = math.ceil(count_res.count / ITENS_POR_PAGINA)
+        except: total_paginas = 1
+
+        # Barra de Navegação
+        col_nav1, col_nav2, col_nav3 = st.columns([1, 3, 1])
+        if col_nav1.button("⬅️ Anterior") and st.session_state.admin_pagina_atual > 1:
+            st.session_state.admin_pagina_atual -= 1; st.rerun()
+            
+        col_nav2.markdown(f"<center>Pág. <b>{st.session_state.admin_pagina_atual}</b> de {total_paginas}</center>", unsafe_allow_html=True)
+        
+        if col_nav3.button("Próxima ➡️") and st.session_state.admin_pagina_atual < total_paginas:
+            st.session_state.admin_pagina_atual += 1; st.rerun()
+
+        st.markdown("---")
+
+        # Busca Dados
+        offset_start = (st.session_state.admin_pagina_atual - 1) * ITENS_POR_PAGINA
+        query = st.session_state.supabase.table("banco_questoes").select("*")
+        
+        if "Mais Recentes" in ordem: query = query.order("id", desc=True)
+        elif "Mais Antigas" in ordem: query = query.order("id", desc=False)
+        elif "Alfabética" in ordem: query = query.order("enunciado", desc=False)
+            
+        lista_questoes = query.range(offset_start, offset_start + ITENS_POR_PAGINA - 1).execute().data
+
+        # --- CONTROLE DE SELEÇÃO EM MASSA ---
+        
+        # Checkbox Mestre (Selecionar Tudo da Página)
+        selecionar_tudo = st.checkbox(f"Selecionar todas as {len(lista_questoes)} questões desta página")
+        
+        # Lista temporária para guardar IDs selecionados nesta interação
+        ids_selecionados = []
+
+        if lista_questoes:
+            with st.container():
+                for q in lista_questoes:
+                    c_check, c_texto, c_edit = st.columns([0.5, 8, 1])
+                    
+                    # Checkbox Individual
+                    # Se 'selecionar_tudo' for True, o valor padrão é True
+                    is_checked = c_check.checkbox("", value=selecionar_tudo, key=f"sel_{q['id']}")
+                    
+                    if is_checked:
+                        ids_selecionados.append(q['id'])
+                    
+                    # Texto da Questão
+                    texto_resumo = f"**[{q.get('id')}]** {q.get('disciplina')} - {q.get('enunciado')[:90]}..."
+                    c_texto.markdown(texto_resumo)
+                    
+                    # Botão Editar
+                    if c_edit.button("✏️", key=f"edit_{q['id']}"):
+                        st.session_state.admin_editando_id = q['id']
+                        st.rerun()
+                    
+                    st.divider()
+            
+            # --- BOTÃO FLUTUANTE DE AÇÃO EM MASSA ---
+            if ids_selecionados:
+                st.markdown("### ⚠️ Ações em Massa")
+                st.write(f"Você selecionou **{len(ids_selecionados)}** questões.")
                 
-                st.divider() # Linha separadora
+                if st.button("🗑️ EXCLUIR ITENS SELECIONADOS", type="primary"):
+                    with st.spinner("Excluindo..."):
+                        try:
+                            # Deleta usando o operador 'in' (lista de IDs)
+                            st.session_state.supabase.table("banco_questoes").delete().in_("id", ids_selecionados).execute()
+                            st.success("Itens excluídos com sucesso!")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao excluir em massa: {e}")
         else:
             st.info("Nenhuma questão nesta página.")
