@@ -20,7 +20,6 @@ if 'resposta_mostrada' not in st.session_state: st.session_state.resposta_mostra
 # Admin
 if 'admin_pagina_atual' not in st.session_state: st.session_state.admin_pagina_atual = 1
 if 'admin_editando_id' not in st.session_state: st.session_state.admin_editando_id = None
-if 'selecionados_para_exclusao' not in st.session_state: st.session_state.selecionados_para_exclusao = []
 
 # --- FUNÇÕES ---
 def init_supabase():
@@ -138,9 +137,11 @@ elif pagina == "📝 Resolver Questões":
             st.rerun()
 
         st.markdown(f"#### {q['enunciado']}")
+        
         alts = q.get('alternativas', {})
         chaves = ordenar_alternativas(alts)
         opts = [f"{k}) {alts[k]}" for k in chaves]
+        
         escolha = st.radio("Resposta:", opts, index=None, key=f"r_{q['id']}")
         
         if st.button("✅ Confirmar"):
@@ -150,14 +151,17 @@ elif pagina == "📝 Resolver Questões":
             letra = escolha.split(")")[0]
             gab = q.get('gabarito', '').strip().upper()
             st.divider()
-            if letra.upper() == gab: st.success("CORRETO! 🎉")
-            else: st.error(f"ERRADO. Gabarito: **{gab}**")
+            if letra.upper() == gab:
+                st.success("CORRETO! 🎉")
+            else:
+                st.error(f"ERRADO. Gabarito: **{gab}**")
             st.info(f"💡 {q.get('comentario', 'Sem comentário.')}")
+
     elif st.session_state.get('questoes_carregadas') == []:
         st.info("Clique em Carregar Questões.")
 
 # ==============================================================================
-# PÁGINA 3: GERENCIADOR (CMS)
+# PÁGINA 3: GERENCIADOR (CMS COMPLETO)
 # ==============================================================================
 elif pagina == "⚙️ Gerenciar Questões":
     st.header("Gestão do Banco de Questões")
@@ -190,7 +194,6 @@ elif pagina == "⚙️ Gerenciar Questões":
                 
                 c1, c2, c3 = st.columns([2, 1, 2])
                 
-                # Botão Salvar
                 if c1.form_submit_button("💾 Salvar Alterações"):
                     try:
                         novas_alts = json.loads(novo_alt_str)
@@ -206,13 +209,11 @@ elif pagina == "⚙️ Gerenciar Questões":
                     except Exception as e:
                         st.error(f"Erro JSON: {e}")
                 
-                # Botão Cancelar
                 if c2.form_submit_button("❌ Cancelar"):
                     st.session_state.admin_editando_id = None
                     st.rerun()
                 
-                # Botão Excluir (Dentro da Edição)
-                if c3.form_submit_button("🗑️ EXCLUIR ESTA QUESTÃO", type="primary"):
+                if c3.form_submit_button("🗑️ EXCLUIR QUESTÃO", type="primary"):
                     try:
                         st.session_state.supabase.table("banco_questoes").delete().eq("id", q_edit['id']).execute()
                         st.toast(f"Questão {q_edit['id']} deletada!")
@@ -222,9 +223,9 @@ elif pagina == "⚙️ Gerenciar Questões":
                     except Exception as e:
                         st.error(f"Erro ao excluir: {e}")
 
-    # --- MODO LISTAGEM E EXCLUSÃO EM MASSA ---
+    # --- MODO LISTAGEM ---
     else:
-        # Filtros e Paginação
+        # 1. Filtros e Paginação
         col_filtro1, col_filtro2 = st.columns([3, 1])
         ordem = col_filtro1.selectbox("Ordenar por:", ["Mais Recentes", "Mais Antigas", "Ordem Alfabética"])
         
@@ -234,19 +235,16 @@ elif pagina == "⚙️ Gerenciar Questões":
             total_paginas = math.ceil(count_res.count / ITENS_POR_PAGINA)
         except: total_paginas = 1
 
-        # Barra de Navegação
         col_nav1, col_nav2, col_nav3 = st.columns([1, 3, 1])
         if col_nav1.button("⬅️ Anterior") and st.session_state.admin_pagina_atual > 1:
             st.session_state.admin_pagina_atual -= 1; st.rerun()
-            
         col_nav2.markdown(f"<center>Pág. <b>{st.session_state.admin_pagina_atual}</b> de {total_paginas}</center>", unsafe_allow_html=True)
-        
         if col_nav3.button("Próxima ➡️") and st.session_state.admin_pagina_atual < total_paginas:
             st.session_state.admin_pagina_atual += 1; st.rerun()
 
         st.markdown("---")
 
-        # Busca Dados
+        # 2. Busca Dados
         offset_start = (st.session_state.admin_pagina_atual - 1) * ITENS_POR_PAGINA
         query = st.session_state.supabase.table("banco_questoes").select("*")
         
@@ -256,51 +254,58 @@ elif pagina == "⚙️ Gerenciar Questões":
             
         lista_questoes = query.range(offset_start, offset_start + ITENS_POR_PAGINA - 1).execute().data
 
-        # --- CONTROLE DE SELEÇÃO EM MASSA ---
+        # 3. CONTAINER DE AÇÃO NO TOPO
+        container_acoes = st.container()
         
-        # Checkbox Mestre (Selecionar Tudo da Página)
+        # 4. Checkbox de "Selecionar Todos"
         selecionar_tudo = st.checkbox(f"Selecionar todas as {len(lista_questoes)} questões desta página")
         
-        # Lista temporária para guardar IDs selecionados nesta interação
-        ids_selecionados = []
+        st.divider()
 
+        # 5. Lista com Checkboxes Individuais
+        ids_para_excluir = []
+        
         if lista_questoes:
-            with st.container():
-                for q in lista_questoes:
-                    c_check, c_texto, c_edit = st.columns([0.5, 8, 1])
-                    
-                    # Checkbox Individual
-                    # Se 'selecionar_tudo' for True, o valor padrão é True
-                    is_checked = c_check.checkbox("", value=selecionar_tudo, key=f"sel_{q['id']}")
-                    
-                    if is_checked:
-                        ids_selecionados.append(q['id'])
-                    
-                    # Texto da Questão
-                    texto_resumo = f"**[{q.get('id')}]** {q.get('disciplina')} - {q.get('enunciado')[:90]}..."
-                    c_texto.markdown(texto_resumo)
-                    
-                    # Botão Editar
-                    if c_edit.button("✏️", key=f"edit_{q['id']}"):
-                        st.session_state.admin_editando_id = q['id']
-                        st.rerun()
-                    
-                    st.divider()
-            
-            # --- BOTÃO FLUTUANTE DE AÇÃO EM MASSA ---
-            if ids_selecionados:
-                st.markdown("### ⚠️ Ações em Massa")
-                st.write(f"Você selecionou **{len(ids_selecionados)}** questões.")
+            for q in lista_questoes:
+                # Layout: Checkbox | Texto | Editar | Excluir
+                c_check, c_texto, c_edit, c_del = st.columns([0.5, 8, 1, 1])
                 
-                if st.button("🗑️ EXCLUIR ITENS SELECIONADOS", type="primary"):
-                    with st.spinner("Excluindo..."):
-                        try:
-                            # Deleta usando o operador 'in' (lista de IDs)
-                            st.session_state.supabase.table("banco_questoes").delete().in_("id", ids_selecionados).execute()
-                            st.success("Itens excluídos com sucesso!")
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro ao excluir em massa: {e}")
+                # O checkbox individual já vem marcado se "selecionar_tudo" for True
+                # Usamos o ID da questão na Key para ser único
+                if c_check.checkbox("", value=selecionar_tudo, key=f"sel_{q['id']}"):
+                    ids_para_excluir.append(q['id'])
+                
+                texto_resumo = f"**[{q['id']}]** {q.get('disciplina')} - {q.get('enunciado')[:80]}..."
+                c_texto.markdown(texto_resumo)
+                
+                if c_edit.button("✏️", key=f"btn_edit_{q['id']}"):
+                    st.session_state.admin_editando_id = q['id']
+                    st.rerun()
+                
+                # Botão de Excluir Individual (Aparece em cada linha)
+                if c_del.button("🗑️", key=f"btn_del_{q['id']}", help="Excluir esta questão"):
+                    try:
+                        st.session_state.supabase.table("banco_questoes").delete().eq("id", q['id']).execute()
+                        st.toast(f"Questão {q['id']} removida.")
+                        time.sleep(0.5)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
+                
+                st.divider()
+
+        # 6. Preenche o Container do Topo SE houver seleção
+        if ids_para_excluir:
+            with container_acoes:
+                st.error(f"⚠️ **{len(ids_para_excluir)} ITENS SELECIONADOS**")
+                if st.button("🗑️ EXCLUIR SELECIONADOS AGORA", type="primary"):
+                    try:
+                        st.session_state.supabase.table("banco_questoes").delete().in_("id", ids_para_excluir).execute()
+                        st.success("Itens excluídos com sucesso!")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao excluir em lote: {e}")
         else:
-            st.info("Nenhuma questão nesta página.")
+            with container_acoes:
+                st.info("Selecione itens abaixo para ver as ações em massa.")
