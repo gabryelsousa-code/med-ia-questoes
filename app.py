@@ -10,196 +10,194 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- ESTADO DA SESSÃO (VARIÁVEIS GLOBAIS) ---
-if 'supabase' not in st.session_state:
-    st.session_state.supabase = None
-if 'indice_questao' not in st.session_state:
-    st.session_state.indice_questao = 0
-if 'questoes_carregadas' not in st.session_state:
-    st.session_state.questoes_carregadas = []
-if 'resposta_mostrada' not in st.session_state:
-    st.session_state.resposta_mostrada = False
+# --- ESTADO DA SESSÃO ---
+if 'supabase' not in st.session_state: st.session_state.supabase = None
+if 'indice_questao' not in st.session_state: st.session_state.indice_questao = 0
+if 'questoes_carregadas' not in st.session_state: st.session_state.questoes_carregadas = []
+if 'resposta_mostrada' not in st.session_state: st.session_state.resposta_mostrada = False
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES ---
 def init_supabase():
-    """
-    Tenta conectar usando st.secrets (configuração salva na nuvem)
-    """
     try:
         url = st.secrets["supabase"]["url"]
         key = st.secrets["supabase"]["key"]
         return create_client(url, key)
-    except Exception as e:
+    except:
         return None
 
 def resetar_navegacao():
     st.session_state.indice_questao = 0
     st.session_state.resposta_mostrada = False
 
-# --- CONEXÃO AUTOMÁTICA AO INICIAR ---
+def ordenar_alternativas(alternativas):
+    """
+    Função para garantir que Certo venha antes de Errado,
+    e que A, B, C, D fiquem em ordem alfabética.
+    """
+    chaves = list(alternativas.keys())
+    
+    # Verifica se é questão de Certo/Errado (Keys: C e E)
+    # Usamos upper() para garantir
+    chaves_upper = [k.upper() for k in chaves]
+    
+    if set(chaves_upper) == {'C', 'E'}:
+        # Retorna na ordem Certo depois Errado
+        return sorted(chaves, key=lambda x: 0 if x.upper() == 'C' else 1)
+    
+    # Se for V ou F
+    if set(chaves_upper) == {'V', 'F'}:
+         return sorted(chaves, key=lambda x: 0 if x.upper() == 'V' else 1)
+
+    # Padrão: Ordem alfabética (A, B, C, D...)
+    return sorted(chaves)
+
+# --- CONEXÃO AUTOMÁTICA ---
 if not st.session_state.supabase:
     st.session_state.supabase = init_supabase()
 
 # --- MENU LATERAL ---
 with st.sidebar:
     st.title("🏥 MedResidency")
-    st.caption("Sistema de Preparação para Residência")
+    st.caption("Plataforma de Treinamento")
     
-    st.markdown("### 🔌 Status da Conexão")
     if st.session_state.supabase:
-        st.success("✅ Conectado ao Supabase")
+        st.success("✅ Banco Conectado")
     else:
-        st.error("❌ Não conectado")
-        st.warning("Configure as 'Secrets' no painel do Streamlit Cloud.")
+        st.error("❌ Banco Desconectado")
+        st.warning("Configure 'st.secrets' no painel.")
 
     st.markdown("---")
-    pagina = st.radio("Navegação", ["📝 Resolver Questões", "📤 Importar JSON"])
+    pagina = st.radio("Menu", ["📝 Resolver Questões", "📤 Importar JSON"])
 
-# --- PÁGINA 1: IMPORTADOR DE QUESTÕES ---
+# ==============================================================================
+# PÁGINA 1: IMPORTADOR
+# ==============================================================================
 if pagina == "📤 Importar JSON":
-    st.header("Importador de Questões em Lote")
-    st.info("O arquivo JSON deve conter uma lista de objetos com: disciplina, assunto, enunciado, alternativas (objeto), gabarito e comentario.")
+    st.header("Importador de Questões")
+    st.info("Suporta Múltipla Escolha e Certo/Errado.")
     
-    arquivo_upload = st.file_uploader("Selecione o arquivo .json", type="json")
+    arquivo_upload = st.file_uploader("Arquivo .json", type="json")
     
-    if arquivo_upload:
-        if not st.session_state.supabase:
-            st.error("Erro de conexão com o banco. Verifique as Secrets.")
-        else:
-            if st.button("Processar e Salvar no Banco"):
-                try:
-                    dados = json.load(arquivo_upload)
+    if arquivo_upload and st.session_state.supabase:
+        if st.button("💾 Salvar no Banco de Dados"):
+            try:
+                dados = json.load(arquivo_upload)
+                
+                if isinstance(dados, list):
+                    progresso = st.progress(0)
+                    status = st.empty()
+                    status.text("Enviando para o Supabase...")
                     
-                    if isinstance(dados, list):
-                        progresso = st.progress(0)
-                        status_text = st.empty()
-                        
-                        try:
-                            # Inserção
-                            status_text.text("Enviando dados para o Supabase...")
-                            st.session_state.supabase.table("banco_questoes").insert(dados).execute()
-                            
-                            progresso.progress(100)
-                            status_text.text("Concluído!")
-                            st.success(f"Sucesso! {len(dados)} questões foram importadas.")
-                            st.balloons()
-                        except Exception as e:
-                            st.error(f"Erro ao inserir no Supabase: {e}")
-                    else:
-                        st.error("O JSON deve ser uma lista [...] de questões.")
-                except Exception as e:
-                    st.error(f"Erro ao ler o arquivo JSON: {e}")
+                    st.session_state.supabase.table("banco_questoes").insert(dados).execute()
+                    
+                    progresso.progress(100)
+                    status.text("Concluído!")
+                    st.success(f"Sucesso! {len(dados)} questões importadas.")
+                    st.balloons()
+                else:
+                    st.error("O arquivo JSON deve conter uma lista [ ].")
+            except Exception as e:
+                st.error(f"Erro na importação: {e}")
 
-# --- PÁGINA 2: RESOLVER QUESTÕES ---
+# ==============================================================================
+# PÁGINA 2: SIMULADOR
+# ==============================================================================
 elif pagina == "📝 Resolver Questões":
     st.header("Simulador de Prova")
     
     if not st.session_state.supabase:
-        st.warning("Banco de dados desconectado. Configure as chaves no Streamlit Secrets.")
+        st.warning("Banco de dados desconectado.")
         st.stop()
 
     # --- FILTROS ---
     col1, col2 = st.columns(2)
     
-    # Busca disciplinas disponíveis (com cache simples para não pesar)
     if 'lista_disciplinas' not in st.session_state:
         try:
-            res_disciplinas = st.session_state.supabase.table("banco_questoes").select("disciplina").execute()
-            if res_disciplinas.data:
-                # Cria lista única e ordenada
-                lista = sorted(list(set([x['disciplina'] for x in res_disciplinas.data if x['disciplina']])))
-                lista.insert(0, "Todas")
-                st.session_state.lista_disciplinas = lista
-            else:
-                st.session_state.lista_disciplinas = ["Todas"]
+            res = st.session_state.supabase.table("banco_questoes").select("disciplina").execute()
+            lista = sorted(list(set([x['disciplina'] for x in res.data if x['disciplina']])))
+            lista.insert(0, "Todas")
+            st.session_state.lista_disciplinas = lista
         except:
             st.session_state.lista_disciplinas = ["Todas"]
 
-    disciplina_filtro = col1.selectbox("Filtrar por Disciplina:", st.session_state.lista_disciplinas, on_change=resetar_navegacao)
+    filtro_disciplina = col1.selectbox("Disciplina:", st.session_state.lista_disciplinas, on_change=resetar_navegacao)
     
-    # Botão para carregar questões
-    if st.button("Buscar Questões"):
+    if st.button("Carregar Questões"):
         try:
             query = st.session_state.supabase.table("banco_questoes").select("*")
-            if disciplina_filtro != "Todas":
-                query = query.eq("disciplina", disciplina_filtro)
+            if filtro_disciplina != "Todas":
+                query = query.eq("disciplina", filtro_disciplina)
             
-            # Limita a 50 questões aleatórias (ou sequenciais)
-            resultado = query.limit(50).execute()
+            # Limite de 50
+            res = query.limit(50).execute()
             
-            if resultado.data:
-                st.session_state.questoes_carregadas = resultado.data
-                st.session_state.indice_questao = 0
-                st.session_state.resposta_mostrada = False
+            if res.data:
+                st.session_state.questoes_carregadas = res.data
+                resetar_navegacao()
                 st.rerun()
             else:
-                st.warning("Nenhuma questão encontrada com esses filtros.")
+                st.warning("Nenhuma questão encontrada.")
         except Exception as e:
             st.error(f"Erro ao buscar: {e}")
 
     st.markdown("---")
 
-    # --- ÁREA DE RESOLUÇÃO ---
+    # --- INTERFACE DA QUESTÃO ---
     if st.session_state.questoes_carregadas:
-        questoes = st.session_state.questoes_carregadas
+        qs = st.session_state.questoes_carregadas
         idx = st.session_state.indice_questao
         
-        # Proteção contra índice fora do limite
-        if idx >= len(questoes):
-            idx = 0
-            st.session_state.indice_questao = 0
-            
-        questao_atual = questoes[idx]
+        if idx >= len(qs): idx = 0
+        q_atual = qs[idx]
         
-        # Barra de Navegação
-        col_nav1, col_nav2, col_nav3 = st.columns([1, 4, 1])
-        if col_nav1.button("⬅️ Anterior") and idx > 0:
+        # Navegação
+        c1, c2, c3 = st.columns([1, 4, 1])
+        if c1.button("⬅️ Anterior") and idx > 0:
             st.session_state.indice_questao -= 1
             st.session_state.resposta_mostrada = False
             st.rerun()
+            
+        c2.markdown(f"<center><b>Questão {idx+1} de {len(qs)}</b><br><small>{q_atual.get('disciplina')} | {q_atual.get('assunto')}</small></center>", unsafe_allow_html=True)
         
-        col_nav2.markdown(f"<center><b>Questão {idx + 1} de {len(questoes)}</b><br><span style='color:gray'>{questao_atual.get('disciplina','')} - {questao_atual.get('assunto','')}</span></center>", unsafe_allow_html=True)
-        
-        if col_nav3.button("Próxima ➡️") and idx < len(questoes) - 1:
+        if c3.button("Próxima ➡️") and idx < len(qs)-1:
             st.session_state.indice_questao += 1
             st.session_state.resposta_mostrada = False
             st.rerun()
 
         # Enunciado
-        st.markdown(f"### {questao_atual['enunciado']}")
+        st.markdown(f"#### {q_atual['enunciado']}")
         
-        # Alternativas
-        alts = questao_atual.get('alternativas', {})
-        # Ordena as chaves (A, B, C, D) para garantir a ordem visual
-        chaves_ordenadas = sorted(alts.keys())
-        opcoes_formatadas = [f"{k}) {alts[k]}" for k in chaves_ordenadas]
+        # --- ALTERNATIVAS INTELIGENTES ---
+        alternativas = q_atual.get('alternativas', {})
         
-        escolha = st.radio("Selecione:", options=opcoes_formatadas, index=None, key=f"q_{questao_atual['id']}")
+        # Usa a função para ordenar (C antes de E, A antes de B)
+        chaves_ordenadas = ordenar_alternativas(alternativas)
         
-        # Botão Confirmar
+        # Formata para exibição
+        opcoes_formatadas = [f"{k}) {alternativas[k]}" for k in chaves_ordenadas]
+        
+        escolha = st.radio("Sua resposta:", opcoes_formatadas, index=None, key=f"radio_{q_atual['id']}")
+        
         if st.button("✅ Confirmar Resposta"):
             if escolha:
                 st.session_state.resposta_mostrada = True
             else:
-                st.warning("Escolha uma alternativa.")
+                st.warning("Selecione uma opção.")
 
         # --- FEEDBACK ---
         if st.session_state.resposta_mostrada and escolha:
-            letra_escolhida = escolha.split(")")[0] # Pega "A" de "A) Texto..."
-            gabarito = questao_atual.get('gabarito', '').strip()
+            letra_usuario = escolha.split(")")[0] # Pega "C" ou "E" ou "A"...
+            gabarito_oficial = q_atual.get('gabarito', '').strip().upper()
             
             st.divider()
             
-            # Compara ignorando maiúsculas/minúsculas
-            if letra_escolhida.upper() == gabarito.upper():
+            if letra_usuario.upper() == gabarito_oficial:
                 st.success(f"**CORRETO!** 🎉")
             else:
-                st.error(f"**INCORRETO.** Você marcou {letra_escolhida}, mas a correta é **{gabarito}**.")
+                st.error(f"**INCORRETO.** Você marcou {letra_usuario}, mas a correta é **{gabarito_oficial}**.")
             
-            # Área de Comentário
-            with st.chat_message("assistant"):
-                st.markdown("#### 💡 Comentário do Professor")
-                st.write(questao_atual.get('comentario', 'Sem comentário cadastrado.'))
+            st.info(f"💡 **Comentário:**\n\n{q_atual.get('comentario', 'Sem comentário.')}")
 
     elif st.session_state.get('questoes_carregadas') == []:
-        st.info("Use os filtros acima e clique em 'Buscar Questões' para começar.")
+        st.info("Clique em 'Carregar Questões' para começar.")
