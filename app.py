@@ -35,20 +35,15 @@ def ordenar_alternativas(alternativas):
     e que A, B, C, D fiquem em ordem alfabética.
     """
     chaves = list(alternativas.keys())
-    
-    # Verifica se é questão de Certo/Errado (Keys: C e E)
-    # Usamos upper() para garantir
     chaves_upper = [k.upper() for k in chaves]
     
+    # Se for Certo/Errado ou Verdadeiro/Falso
     if set(chaves_upper) == {'C', 'E'}:
-        # Retorna na ordem Certo depois Errado
         return sorted(chaves, key=lambda x: 0 if x.upper() == 'C' else 1)
-    
-    # Se for V ou F
     if set(chaves_upper) == {'V', 'F'}:
          return sorted(chaves, key=lambda x: 0 if x.upper() == 'V' else 1)
 
-    # Padrão: Ordem alfabética (A, B, C, D...)
+    # Padrão: Ordem alfabética
     return sorted(chaves)
 
 # --- CONEXÃO AUTOMÁTICA ---
@@ -58,7 +53,6 @@ if not st.session_state.supabase:
 # --- MENU LATERAL ---
 with st.sidebar:
     st.title("🏥 MedResidency")
-    st.caption("Plataforma de Treinamento")
     
     if st.session_state.supabase:
         st.success("✅ Banco Conectado")
@@ -112,6 +106,7 @@ elif pagina == "📝 Resolver Questões":
     # --- FILTROS ---
     col1, col2 = st.columns(2)
     
+    # Carrega disciplinas (cache simples)
     if 'lista_disciplinas' not in st.session_state:
         try:
             res = st.session_state.supabase.table("banco_questoes").select("disciplina").execute()
@@ -123,23 +118,25 @@ elif pagina == "📝 Resolver Questões":
 
     filtro_disciplina = col1.selectbox("Disciplina:", st.session_state.lista_disciplinas, on_change=resetar_navegacao)
     
+    # Botão de Busca
     if st.button("Carregar Questões"):
-        try:
-            query = st.session_state.supabase.table("banco_questoes").select("*")
-            if filtro_disciplina != "Todas":
-                query = query.eq("disciplina", filtro_disciplina)
-            
-            # Limite de 50
-            res = query.limit(50).execute()
-            
-            if res.data:
-                st.session_state.questoes_carregadas = res.data
-                resetar_navegacao()
-                st.rerun()
-            else:
-                st.warning("Nenhuma questão encontrada.")
-        except Exception as e:
-            st.error(f"Erro ao buscar: {e}")
+        with st.spinner("Buscando questões no banco..."):
+            try:
+                query = st.session_state.supabase.table("banco_questoes").select("*")
+                if filtro_disciplina != "Todas":
+                    query = query.eq("disciplina", filtro_disciplina)
+                
+                # AQUI ESTÁ A MUDANÇA: Aumentei o limite para 10.000
+                res = query.limit(10000).execute()
+                
+                if res.data:
+                    st.session_state.questoes_carregadas = res.data
+                    resetar_navegacao()
+                    st.rerun()
+                else:
+                    st.warning("Nenhuma questão encontrada.")
+            except Exception as e:
+                st.error(f"Erro ao buscar: {e}")
 
     st.markdown("---")
 
@@ -148,6 +145,7 @@ elif pagina == "📝 Resolver Questões":
         qs = st.session_state.questoes_carregadas
         idx = st.session_state.indice_questao
         
+        # Garante índice válido
         if idx >= len(qs): idx = 0
         q_atual = qs[idx]
         
@@ -158,6 +156,7 @@ elif pagina == "📝 Resolver Questões":
             st.session_state.resposta_mostrada = False
             st.rerun()
             
+        # Mostra contador total
         c2.markdown(f"<center><b>Questão {idx+1} de {len(qs)}</b><br><small>{q_atual.get('disciplina')} | {q_atual.get('assunto')}</small></center>", unsafe_allow_html=True)
         
         if c3.button("Próxima ➡️") and idx < len(qs)-1:
@@ -168,13 +167,9 @@ elif pagina == "📝 Resolver Questões":
         # Enunciado
         st.markdown(f"#### {q_atual['enunciado']}")
         
-        # --- ALTERNATIVAS INTELIGENTES ---
+        # Alternativas Ordenadas
         alternativas = q_atual.get('alternativas', {})
-        
-        # Usa a função para ordenar (C antes de E, A antes de B)
         chaves_ordenadas = ordenar_alternativas(alternativas)
-        
-        # Formata para exibição
         opcoes_formatadas = [f"{k}) {alternativas[k]}" for k in chaves_ordenadas]
         
         escolha = st.radio("Sua resposta:", opcoes_formatadas, index=None, key=f"radio_{q_atual['id']}")
@@ -185,9 +180,9 @@ elif pagina == "📝 Resolver Questões":
             else:
                 st.warning("Selecione uma opção.")
 
-        # --- FEEDBACK ---
+        # Feedback
         if st.session_state.resposta_mostrada and escolha:
-            letra_usuario = escolha.split(")")[0] # Pega "C" ou "E" ou "A"...
+            letra_usuario = escolha.split(")")[0] 
             gabarito_oficial = q_atual.get('gabarito', '').strip().upper()
             
             st.divider()
@@ -200,4 +195,4 @@ elif pagina == "📝 Resolver Questões":
             st.info(f"💡 **Comentário:**\n\n{q_atual.get('comentario', 'Sem comentário.')}")
 
     elif st.session_state.get('questoes_carregadas') == []:
-        st.info("Clique em 'Carregar Questões' para começar.")
+        st.info(f"Clique em 'Carregar Questões' para começar.")
