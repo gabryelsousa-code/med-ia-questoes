@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- ESTADO DA SESSÃO (MEMÓRIA) ---
+# --- ESTADO DA SESSÃO ---
 if 'questoes_geradas' not in st.session_state:
     st.session_state.questoes_geradas = []
 if 'questoes_prova' not in st.session_state:
@@ -53,7 +53,6 @@ if modo == "📝 Gerador de Questões (Criar)":
     arquivo_gerador = st.file_uploader("Upload do Material de Estudo (PDF)", type="pdf", key="upl_gerador")
     
     col1, col2 = st.columns(2)
-    # Slider ajustado para até 100 questões
     qtd_questoes = col1.slider("Quantidade de Questões", 1, 100, 5) 
     dificuldade = col2.selectbox("Dificuldade", ["Internato", "Residência Médica", "R3 / Título de Especialista"])
     
@@ -90,9 +89,9 @@ if modo == "📝 Gerador de Questões (Criar)":
                 """
                 
                 try:
-                    # Usando gemini-1.5-flash pois ele aguenta textos gigantes (1 milhão de tokens)
+                    # CORREÇÃO AQUI: Usando o nome que funcionou no seu Colab
                     response = client.models.generate_content(
-                        model='gemini-1.5-flash', 
+                        model='gemini-flash-latest', 
                         contents=prompt,
                         config=types.GenerateContentConfig(
                             tools=[types.Tool(google_search=types.GoogleSearch())], # Ativa a busca nativa
@@ -110,7 +109,6 @@ if modo == "📝 Gerador de Questões (Criar)":
         for i, q in enumerate(st.session_state.questoes_geradas):
             with st.expander(f"Questão {i+1}: {q.get('enunciado', '')[:60]}...", expanded=False):
                 st.markdown(f"**{q['enunciado']}**")
-                # Proteção caso o JSON venha incompleto
                 alts = q.get('alternativas', {})
                 st.info(f"A) {alts.get('A', '')}")
                 st.info(f"B) {alts.get('B', '')}")
@@ -151,9 +149,9 @@ elif modo == "✅ Corretor de Provas (Resolver)":
                     ]
                     """
                     try:
-                        # O Gemini 1.5 Flash é capaz de processar até 1 milhão de tokens (aprox 700 mil palavras)
+                        # CORREÇÃO AQUI TAMBÉM: Usando o nome correto
                         response = client.models.generate_content(
-                            model='gemini-1.5-flash',
+                            model='gemini-flash-latest',
                             contents=prompt,
                             config=types.GenerateContentConfig(response_mime_type='application/json')
                         )
@@ -205,8 +203,9 @@ elif modo == "✅ Corretor de Provas (Resolver)":
                 }}
                 """
                 try:
+                    # CORREÇÃO AQUI TAMBÉM: Usando o nome correto
                     resp = client.models.generate_content(
-                        model='gemini-1.5-flash',
+                        model='gemini-flash-latest',
                         contents=prompt_correcao,
                         config=types.GenerateContentConfig(
                             tools=[types.Tool(google_search=types.GoogleSearch())], # Busca ativada
