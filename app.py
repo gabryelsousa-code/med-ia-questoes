@@ -2,19 +2,24 @@ import streamlit as st
 from supabase import create_client, Client
 import json
 import time
+import math
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="MedResidency - Banco de Questões",
+    page_title="MedResidency - Admin",
     page_icon="🏥",
     layout="wide"
 )
 
 # --- ESTADO DA SESSÃO ---
 if 'supabase' not in st.session_state: st.session_state.supabase = None
+# Estados de Navegação do Aluno
 if 'indice_questao' not in st.session_state: st.session_state.indice_questao = 0
 if 'questoes_carregadas' not in st.session_state: st.session_state.questoes_carregadas = []
 if 'resposta_mostrada' not in st.session_state: st.session_state.resposta_mostrada = False
+# Estados do Admin
+if 'admin_pagina_atual' not in st.session_state: st.session_state.admin_pagina_atual = 1
+if 'admin_editando_id' not in st.session_state: st.session_state.admin_editando_id = None
 
 # --- FUNÇÕES ---
 def init_supabase():
@@ -25,7 +30,7 @@ def init_supabase():
     except:
         return None
 
-def resetar_navegacao():
+def resetar_navegacao_aluno():
     st.session_state.indice_questao = 0
     st.session_state.resposta_mostrada = False
 
@@ -53,7 +58,6 @@ with st.sidebar:
         st.warning("Configure 'st.secrets'.")
 
     st.markdown("---")
-    # ADICIONEI A NOVA PÁGINA AQUI
     pagina = st.radio("Menu", ["📝 Resolver Questões", "📤 Importar JSON", "⚙️ Gerenciar Questões"])
 
 # ==============================================================================
@@ -78,7 +82,7 @@ if pagina == "📤 Importar JSON":
                 st.error(f"Erro: {e}")
 
 # ==============================================================================
-# PÁGINA 2: SIMULADOR
+# PÁGINA 2: SIMULADOR (ALUNO)
 # ==============================================================================
 elif pagina == "📝 Resolver Questões":
     st.header("Simulador de Prova")
@@ -97,18 +101,17 @@ elif pagina == "📝 Resolver Questões":
         except:
             st.session_state.lista_disciplinas = ["Todas"]
 
-    filtro_disciplina = col1.selectbox("Disciplina:", st.session_state.lista_disciplinas, on_change=resetar_navegacao)
+    filtro = col1.selectbox("Disciplina:", st.session_state.lista_disciplinas, on_change=resetar_navegacao_aluno)
     
     if st.button("Carregar Questões"):
         try:
             query = st.session_state.supabase.table("banco_questoes").select("*")
-            if filtro_disciplina != "Todas":
-                query = query.eq("disciplina", filtro_disciplina)
-            res = query.limit(10000).execute() # Limite alto
+            if filtro != "Todas": query = query.eq("disciplina", filtro)
+            res = query.limit(1000).execute()
             
             if res.data:
                 st.session_state.questoes_carregadas = res.data
-                resetar_navegacao()
+                resetar_navegacao_aluno()
                 st.rerun()
             else:
                 st.warning("Nenhuma questão encontrada.")
@@ -159,43 +162,22 @@ elif pagina == "📝 Resolver Questões":
         st.info("Clique em Carregar Questões.")
 
 # ==============================================================================
-# PÁGINA 3: GERENCIADOR (NOVIDADE!)
+# PÁGINA 3: GERENCIADOR (CMS)
 # ==============================================================================
 elif pagina == "⚙️ Gerenciar Questões":
-    st.header("Gerenciamento do Banco")
+    st.header("Gestão do Banco de Questões")
     
     if not st.session_state.supabase:
-        st.warning("Banco desconectado.")
-        st.stop()
+        st.error("Banco desconectado."); st.stop()
 
-    # 1. Pesquisa
-    termo = st.text_input("🔍 Pesquisar por enunciado ou ID:", placeholder="Digite uma palavra chave...")
-    
-    resultados = []
-    if termo:
-        try:
-            # Busca por ID se for número, ou Enunciado se for texto
-            if termo.isdigit():
-                 res = st.session_state.supabase.table("banco_questoes").select("*").eq("id", int(termo)).execute()
-            else:
-                 res = st.session_state.supabase.table("banco_questoes").select("*").ilike("enunciado", f"%{termo}%").limit(20).execute()
-            resultados = res.data
-        except Exception as e:
-            st.error(f"Erro na busca: {e}")
-
-    # 2. Exibição da Tabela
-    if resultados:
-        st.write(f"Encontrados: {len(resultados)}")
+    # --- LÓGICA DE EDIÇÃO (Se estiver editando, mostra form. Se não, mostra lista) ---
+    if st.session_state.admin_editando_id:
+        # Busca os dados frescos da questão
+        res_edit = st.session_state.supabase.table("banco_questoes").select("*").eq("id", st.session_state.admin_editando_id).execute()
         
-        # Cria um selectbox para escolher qual editar
-        opcoes_edicao = {f"{q['id']} - {q['enunciado'][:50]}...": q for q in resultados}
-        selecionada_chave = st.selectbox("Selecione a questão para editar:", list(opcoes_edicao.keys()))
-        
-        if selecionada_chave:
-            q_edit = opcoes_edicao[selecionada_chave]
-            
-            st.markdown("---")
-            st.subheader(f"Editando Questão #{q_edit['id']}")
+        if res_edit.data:
+            q_edit = res_edit.data[0]
+            st.info(f"Editando Questão ID: {q_edit['id']}")
             
             with st.form("form_edicao"):
                 col_a, col_b = st.columns(2)
@@ -204,53 +186,108 @@ elif pagina == "⚙️ Gerenciar Questões":
                 
                 novo_enunciado = st.text_area("Enunciado", q_edit.get('enunciado'), height=150)
                 
-                # Editor de Alternativas (JSON)
-                st.markdown("**Alternativas (Formato JSON):**")
+                st.markdown("**Alternativas (JSON):**")
                 alt_str = json.dumps(q_edit.get('alternativas', {}), indent=2, ensure_ascii=False)
-                novo_alt_str = st.text_area("Edite o JSON das alternativas", alt_str, height=200)
+                novo_alt_str = st.text_area("JSON Alternativas", alt_str, height=200)
                 
                 col_c, col_d = st.columns(2)
-                novo_gabarito = col_c.text_input("Gabarito (Letra)", q_edit.get('gabarito'))
-                novo_comentario = st.text_area("Comentário", q_edit.get('comentario'), height=150)
+                novo_gabarito = col_c.text_input("Gabarito", q_edit.get('gabarito'))
+                novo_comentario = st.text_area("Comentário", q_edit.get('comentario'), height=100)
                 
-                # Botões de Ação
-                c1, c2 = st.columns([1, 5])
-                salvar = c1.form_submit_button("💾 Salvar Alterações")
+                # Botões do Form
+                c1, c2 = st.columns([1, 6])
+                if c1.form_submit_button("💾 Salvar"):
+                    try:
+                        novas_alts = json.loads(novo_alt_str)
+                        update_data = {
+                            "disciplina": novo_disc, "assunto": novo_assunto,
+                            "enunciado": novo_enunciado, "alternativas": novas_alts,
+                            "gabarito": novo_gabarito, "comentario": novo_comentario
+                        }
+                        st.session_state.supabase.table("banco_questoes").update(update_data).eq("id", q_edit['id']).execute()
+                        st.success("Salvo!"); time.sleep(0.5)
+                        st.session_state.admin_editando_id = None # Sai do modo edição
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro JSON: {e}")
                 
-            # Botão de Excluir (Fora do form para evitar submit acidental)
-            if st.button("🗑️ EXCLUIR ESTA QUESTÃO", type="primary"):
-                 try:
-                     st.session_state.supabase.table("banco_questoes").delete().eq("id", q_edit['id']).execute()
-                     st.success("Questão excluída com sucesso!")
-                     time.sleep(1)
-                     st.rerun()
-                 except Exception as e:
-                     st.error(f"Erro ao excluir: {e}")
-
-            # Lógica de Salvar
-            if salvar:
-                try:
-                    # Valida o JSON das alternativas
-                    novas_alts = json.loads(novo_alt_str)
-                    
-                    dados_atualizados = {
-                        "disciplina": novo_disc,
-                        "assunto": novo_assunto,
-                        "enunciado": novo_enunciado,
-                        "alternativas": novas_alts,
-                        "gabarito": novo_gabarito,
-                        "comentario": novo_comentario
-                    }
-                    
-                    st.session_state.supabase.table("banco_questoes").update(dados_atualizados).eq("id", q_edit['id']).execute()
-                    st.success("Questão atualizada com sucesso!")
-                    time.sleep(1)
+                if c2.form_submit_button("❌ Cancelar"):
+                    st.session_state.admin_editando_id = None
                     st.rerun()
-                    
-                except json.JSONDecodeError:
-                    st.error("Erro: O campo 'Alternativas' contém um JSON inválido. Verifique as aspas e vírgulas.")
-                except Exception as e:
-                    st.error(f"Erro ao atualizar: {e}")
+
+    else:
+        # --- LISTAGEM E FILTROS ---
+        col_filtro1, col_filtro2 = st.columns([3, 1])
+        ordem = col_filtro1.selectbox("Ordenar por:", ["Mais Recentes (Inclusão)", "Mais Antigas", "Ordem Alfabética (Enunciado)"])
+        
+        # Paginação
+        ITENS_POR_PAGINA = 50
+        
+        # Query Base para Contagem
+        try:
+            # Pega contagem total (count='exact')
+            count_res = st.session_state.supabase.table("banco_questoes").select("id", count='exact').execute()
+            total_items = count_res.count
+            total_paginas = math.ceil(total_items / ITENS_POR_PAGINA)
+        except:
+            total_items = 0; total_paginas = 1
+
+        # Navegação de Páginas
+        col_nav1, col_nav2, col_nav3 = st.columns([1, 3, 1])
+        if col_nav1.button("⬅️ Página Anterior") and st.session_state.admin_pagina_atual > 1:
+            st.session_state.admin_pagina_atual -= 1
+            st.rerun()
             
-    elif termo:
-        st.warning("Nenhuma questão encontrada.")
+        col_nav2.markdown(f"<center>Página <b>{st.session_state.admin_pagina_atual}</b> de {total_paginas}<br><small>Total: {total_items} questões</small></center>", unsafe_allow_html=True)
+        
+        if col_nav3.button("Próxima Página ➡️") and st.session_state.admin_pagina_atual < total_paginas:
+            st.session_state.admin_pagina_atual += 1
+            st.rerun()
+
+        st.markdown("---")
+
+        # --- BUSCA OS DADOS DA PÁGINA ATUAL ---
+        offset_start = (st.session_state.admin_pagina_atual - 1) * ITENS_POR_PAGINA
+        offset_end = offset_start + (ITENS_POR_PAGINA - 1)
+        
+        query = st.session_state.supabase.table("banco_questoes").select("*")
+        
+        # Aplica Ordenação
+        if "Mais Recentes" in ordem:
+            query = query.order("id", desc=True) # ID geralmente reflete inserção
+        elif "Mais Antigas" in ordem:
+            query = query.order("id", desc=False)
+        elif "Alfabética" in ordem:
+            query = query.order("enunciado", desc=False)
+            
+        # Aplica Paginação (Range)
+        lista_questoes = query.range(offset_start, offset_end).execute().data
+
+        # --- EXIBIÇÃO DA LISTA ---
+        if lista_questoes:
+            for q in lista_questoes:
+                # Layout da Linha
+                c_texto, c_edit, c_del = st.columns([8, 1, 1])
+                
+                # Resumo do texto
+                texto_resumo = f"**[{q.get('id')}]** {q.get('disciplina')} - {q.get('enunciado')[:80]}..."
+                c_texto.markdown(texto_resumo)
+                
+                # Botão Editar
+                if c_edit.button("✏️", key=f"edit_{q['id']}", help="Editar Questão"):
+                    st.session_state.admin_editando_id = q['id']
+                    st.rerun()
+                
+                # Botão Excluir
+                if c_del.button("🗑️", key=f"del_{q['id']}", help="Excluir Definitivamente"):
+                    try:
+                        st.session_state.supabase.table("banco_questoes").delete().eq("id", q['id']).execute()
+                        st.toast(f"Questão {q['id']} deletada!")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
+                
+                st.divider() # Linha separadora
+        else:
+            st.info("Nenhuma questão nesta página.")
