@@ -1,4 +1,3 @@
 streamlit
-openai
+google-genai
 pypdf
-duckduckgo-search
