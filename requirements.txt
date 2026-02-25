@@ -1,4 +1,2 @@
 streamlit
-google-genai
-pypdf
 supabase
