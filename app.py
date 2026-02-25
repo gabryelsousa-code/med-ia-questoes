@@ -1,211 +1,178 @@
 import streamlit as st
-from google import genai
-from google.genai import types
-from pypdf import PdfReader
 from supabase import create_client, Client
 import json
-import hashlib
+import time
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="MedBank - Estratégia AI", page_icon="🦉", layout="wide")
+st.set_page_config(
+    page_title="MedResidency - Banco de Questões",
+    page_icon="🏥",
+    layout="wide"
+)
 
-# --- CONEXÃO COM O BANCO DE DADOS (SUPABASE) ---
+# --- ESTADO DA SESSÃO (VARIÁVEIS GLOBAIS) ---
 if 'supabase' not in st.session_state:
     st.session_state.supabase = None
+if 'indice_questao' not in st.session_state:
+    st.session_state.indice_questao = 0
+if 'questoes_carregadas' not in st.session_state:
+    st.session_state.questoes_carregadas = []
+if 'resposta_mostrada' not in st.session_state:
+    st.session_state.resposta_mostrada = False
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES AUXILIARES ---
 def init_supabase(url, key):
     try:
         return create_client(url, key)
-    except:
+    except Exception as e:
         return None
 
-def extrair_texto_pdf(arquivo):
-    leitor = PdfReader(arquivo)
-    texto = ""
-    for pagina in leitor.pages:
-        texto += pagina.extract_text() + "\n"
-    return texto
-
-def gerar_hash_questao(enunciado):
-    return hashlib.md5(enunciado.encode()).hexdigest()
-
-def get_gemini_client(api_key):
-    return genai.Client(api_key=api_key)
+def resetar_navegacao():
+    st.session_state.indice_questao = 0
+    st.session_state.resposta_mostrada = False
 
 # --- MENU LATERAL ---
 with st.sidebar:
-    st.title("🦉 MedBank AI")
+    st.title("🏥 MedResidency")
+    st.caption("Sistema de Preparação para Residência")
     
-    with st.expander("Configurar Acessos", expanded=True):
-        google_key = st.text_input("Google API Key (AIza...):", type="password")
+    with st.expander("⚙️ Configuração do Banco", expanded=True):
         supa_url = st.text_input("Supabase URL:", type="password")
         supa_key = st.text_input("Supabase Key:", type="password")
-    
-    if supa_url and supa_key:
-        st.session_state.supabase = init_supabase(supa_url, supa_key)
-        if st.session_state.supabase:
-            st.success("Banco Conectado!")
-        else:
-            st.error("Erro na conexão Supabase")
-    
-    st.markdown("---")
-    modo = st.radio("Menu:", ["📝 Resolver Questões", "⚡ Gerador de Questões", "📚 Banco Salvo"])
-
-# --- MODO 1: RESOLVER QUESTÕES ---
-if modo == "📝 Resolver Questões":
-    st.header("Upload de Lista de Questões")
-    arquivo = st.file_uploader("PDF da Prova", type="pdf")
-    
-    if arquivo and google_key:
-        if 'questoes_extraidas' not in st.session_state:
-            if st.button("🔍 Extrair Questões"):
-                with st.spinner("Lendo PDF..."):
-                    try:
-                        texto = extrair_texto_pdf(arquivo)
-                        client = get_gemini_client(google_key)
-                        prompt = f"""
-                        Extraia as questões. JSON: [{{ "enunciado": "...", "alternativas": ["A)..."] }}]
-                        Texto: {texto[:100000]}
-                        """
-                        resp = client.models.generate_content(
-                            model='gemini-flash-latest',
-                            contents=prompt,
-                            config=types.GenerateContentConfig(response_mime_type='application/json')
-                        )
-                        st.session_state.questoes_extraidas = json.loads(resp.text)
-                        st.session_state.nome_arquivo_atual = arquivo.name
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao extrair: {e}")
-
-    if 'questoes_extraidas' in st.session_state:
-        qs = st.session_state.questoes_extraidas
-        idx = st.selectbox("Questão:", range(len(qs)), format_func=lambda x: f"Questão {x+1}")
-        q = qs[idx]
         
-        st.write(q['enunciado'])
-        resp_user = st.radio("Alternativas:", q['alternativas'], key=gerar_hash_questao(q['enunciado']))
-        
-        if st.button("Responder e Corrigir"):
-            ja_existe = False
-            # 1. Tenta buscar no banco
+        if supa_url and supa_key:
+            st.session_state.supabase = init_supabase(supa_url, supa_key)
             if st.session_state.supabase:
-                try:
-                    res = st.session_state.supabase.table("questoes").select("*").eq("enunciado", q['enunciado']).execute()
-                    if res.data:
-                        st.session_state.correcao_atual = res.data[0]
-                        ja_existe = True
-                except:
-                    pass
-            
-            # 2. Se não achou, gera com IA
-            if not ja_existe:
-                with st.spinner("Pesquisando..."):
-                    try:
-                        client = get_gemini_client(google_key)
-                        prompt_corr = f"""
-                        Corrija a questão usando Google Search (Estratégia MED/Diretrizes).
-                        Questão: {q['enunciado']}
-                        Alternativas: {q['alternativas']}
-                        JSON: {{ "resposta_correta": "...", "comentario_geral": "...", "analise_alternativas": [{{ "alt": "A", "status": "...", "motivo": "..." }}], "fontes": "..." }}
-                        """
-                        resp = client.models.generate_content(
-                            model='gemini-flash-latest',
-                            contents=prompt_corr,
-                            config=types.GenerateContentConfig(
-                                tools=[types.Tool(google_search=types.GoogleSearch())],
-                                response_mime_type='application/json'
-                            )
-                        )
-                        dados_ia = json.loads(resp.text)
-                        
-                        # Salva no banco
-                        if st.session_state.supabase:
-                            novo = {
-                                "enunciado": q['enunciado'],
-                                "alternativas": q['alternativas'],
-                                "resposta_correta": dados_ia['resposta_correta'],
-                                "comentario_ia": dados_ia,
-                                "fonte_original": st.session_state.get('nome_arquivo_atual', 'Upload')
-                            }
-                            st.session_state.supabase.table("questoes").insert(novo).execute()
-                        
-                        st.session_state.correcao_atual = {"comentario_ia": dados_ia}
-                    except Exception as e:
-                        st.error(f"Erro na correção: {e}")
-
-        # Exibe Correção
-        if 'correcao_atual' in st.session_state:
-            c = st.session_state.correcao_atual.get('comentario_ia', {})
-            st.markdown("---")
-            st.success(f"Gabarito: {c.get('resposta_correta')}")
-            st.info(c.get('comentario_geral'))
-            for item in c.get('analise_alternativas', []):
-                icon = "✅" if "correta" in item.get('status', '').lower() else "❌"
-                st.write(f"{icon} {item.get('alt')}: {item.get('motivo')}")
-
-# --- MODO 2: GERADOR ---
-elif modo == "⚡ Gerador de Questões":
-    st.header("Gerador de Simulados")
-    pdf = st.file_uploader("Material Base", type="pdf")
-    qtd = st.slider("Qtd", 1, 20, 5)
-    dif = st.selectbox("Dificuldade", ["R1", "R3", "Título"])
-    
-    if pdf and st.button("Gerar") and google_key:
-        with st.spinner("Gerando..."):
-            try:
-                texto = extrair_texto_pdf(pdf)
-                client = get_gemini_client(google_key)
-                prompt = f"""
-                Crie {qtd} questões nível {dif}.
-                JSON: [{{ "enunciado": "...", "alternativas": ["..."], "resposta_correta": "...", "comentario_ia": {{ "comentario_geral": "...", "analise_alternativas": [] }} }}]
-                Texto: {texto[:100000]}
-                """
-                resp = client.models.generate_content(
-                    model='gemini-flash-latest',
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearch())],
-                        response_mime_type='application/json'
-                    )
-                )
-                novas = json.loads(resp.text)
-                
-                if st.session_state.supabase:
-                    dados_banco = []
-                    for n in novas:
-                        dados_banco.append({
-                            "enunciado": n['enunciado'],
-                            "alternativas": n['alternativas'],
-                            "resposta_correta": n['resposta_correta'],
-                            "comentario_ia": n['comentario_ia'],
-                            "dificuldade": dif,
-                            "fonte_original": "Gerado IA"
-                        })
-                    st.session_state.supabase.table("questoes").insert(dados_banco).execute()
-                    st.success("Salvo no banco!")
-                else:
-                    st.json(novas)
-            except Exception as e:
-                st.error(f"Erro: {e}")
-
-# --- MODO 3: BANCO SALVO ---
-elif modo == "📚 Banco Salvo":
-    st.header("Questões Salvas")
-    if st.session_state.supabase:
-        try:
-            res = st.session_state.supabase.table("questoes").select("*").execute()
-            qs = res.data
-            if qs:
-                sel = st.selectbox("Revisar:", qs, format_func=lambda x: f"{x['id']} - {x['enunciado'][:60]}...")
-                st.write(sel['enunciado'])
-                st.success(f"Gabarito: {sel['resposta_correta']}")
-                c = sel['comentario_ia']
-                st.write(c.get('comentario_geral'))
+                st.success("Conectado ao Banco!")
             else:
-                st.info("Banco vazio.")
-        except Exception as e:
-            st.error(f"Erro ao ler banco: {e}")
+                st.error("Falha na conexão.")
+
+    st.markdown("---")
+    pagina = st.radio("Navegação", ["📝 Resolver Questões", "📤 Importar JSON"])
+
+# --- PÁGINA 1: IMPORTADOR DE QUESTÕES ---
+if pagina == "📤 Importar JSON":
+    st.header("Importador de Questões em Lote")
+    st.info("O arquivo JSON deve conter uma lista de objetos com: disciplina, assunto, enunciado, alternativas (objeto), gabarito e comentario.")
+    
+    arquivo_upload = st.file_uploader("Selecione o arquivo .json", type="json")
+    
+    if arquivo_upload and st.session_state.supabase:
+        if st.button("Processar e Salvar no Banco"):
+            try:
+                dados = json.load(arquivo_upload)
+                
+                # Validação simples
+                if isinstance(dados, list):
+                    progresso = st.progress(0)
+                    total = len(dados)
+                    
+                    # Inserção em Lote (Batch Insert)
+                    try:
+                        st.session_state.supabase.table("banco_questoes").insert(dados).execute()
+                        progresso.progress(100)
+                        st.success(f"Sucesso! {total} questões foram importadas para o banco.")
+                        st.balloons()
+                    except Exception as e:
+                        st.error(f"Erro ao inserir no Supabase: {e}")
+                else:
+                    st.error("O JSON deve ser uma lista [...] de questões.")
+            except Exception as e:
+                st.error(f"Erro ao ler o arquivo JSON: {e}")
+    elif not st.session_state.supabase:
+        st.warning("Conecte o Supabase na barra lateral antes de importar.")
+
+# --- PÁGINA 2: RESOLVER QUESTÕES ---
+elif pagina == "📝 Resolver Questões":
+    st.header("Simulador de Prova")
+    
+    if not st.session_state.supabase:
+        st.warning("Por favor, conecte o banco de dados na barra lateral.")
+        st.stop()
+
+    # --- FILTROS ---
+    col1, col2 = st.columns(2)
+    
+    # Busca disciplinas disponíveis no banco para o filtro
+    try:
+        res_disciplinas = st.session_state.supabase.table("banco_questoes").select("disciplina").execute()
+        lista_disciplinas = sorted(list(set([x['disciplina'] for x in res_disciplinas.data]))) if res_disciplinas.data else []
+        lista_disciplinas.insert(0, "Todas")
+    except:
+        lista_disciplinas = ["Todas"]
+
+    disciplina_filtro = col1.selectbox("Filtrar por Disciplina:", lista_disciplinas, on_change=resetar_navegacao)
+    
+    # Botão para carregar questões
+    if st.button("Buscar Questões"):
+        query = st.session_state.supabase.table("banco_questoes").select("*")
+        if disciplina_filtro != "Todas":
+            query = query.eq("disciplina", disciplina_filtro)
+        
+        # Limita a 50 questões por vez para não pesar
+        resultado = query.limit(50).execute()
+        
+        if resultado.data:
+            st.session_state.questoes_carregadas = resultado.data
+            st.session_state.indice_questao = 0
+            st.session_state.resposta_mostrada = False
+            st.rerun()
+        else:
+            st.warning("Nenhuma questão encontrada com esses filtros.")
+
+    st.markdown("---")
+
+    # --- ÁREA DE RESOLUÇÃO ---
+    if st.session_state.questoes_carregadas:
+        questoes = st.session_state.questoes_carregadas
+        idx = st.session_state.indice_questao
+        questao_atual = questoes[idx]
+        
+        # Barra de Progresso / Navegação
+        col_nav1, col_nav2, col_nav3 = st.columns([1, 4, 1])
+        if col_nav1.button("⬅️ Anterior") and idx > 0:
+            st.session_state.indice_questao -= 1
+            st.session_state.resposta_mostrada = False
+            st.rerun()
+        
+        col_nav2.markdown(f"<center><b>Questão {idx + 1} de {len(questoes)}</b><br><span style='color:gray'>{questao_atual['disciplina']} - {questao_atual['assunto']}</span></center>", unsafe_allow_html=True)
+        
+        if col_nav3.button("Próxima ➡️") and idx < len(questoes) - 1:
+            st.session_state.indice_questao += 1
+            st.session_state.resposta_mostrada = False
+            st.rerun()
+
+        # Enunciado
+        st.markdown(f"### {questao_atual['enunciado']}")
+        
+        # Alternativas
+        alts = questao_atual['alternativas'] # Espera um dict {"A": "...", "B": "..."}
+        opcoes_formatadas = [f"{k}) {v}" for k, v in alts.items()]
+        
+        # O widget radio retorna a string inteira "A) Texto..."
+        escolha = st.radio("Selecione a alternativa:", options=opcoes_formatadas, index=None, key=f"q_{questao_atual['id']}")
+        
+        # Botão de Confirmar
+        if st.button("✅ Confirmar Resposta"):
+            if escolha:
+                st.session_state.resposta_mostrada = True
+            else:
+                st.warning("Selecione uma alternativa antes de confirmar.")
+
+        # --- FEEDBACK E COMENTÁRIOS ---
+        if st.session_state.resposta_mostrada:
+            letra_escolhida = escolha.split(")")[0] # Pega só o "A"
+            gabarito = questao_atual['gabarito']
+            
+            st.divider()
+            
+            if letra_escolhida == gabarito:
+                st.success(f"**PARABÉNS! Você acertou!** (Gabarito: {gabarito})")
+            else:
+                st.error(f"**Você errou.** Sua escolha: {letra_escolhida} | Gabarito Correto: **{gabarito}**")
+            
+            # Mostra o Comentário
+            st.info(f"💡 **Comentário do Professor:**\n\n{questao_atual['comentario']}")
+
     else:
-        st.warning("Conecte o Supabase.")
+        st.info("Use os filtros acima e clique em 'Buscar Questões' para começar.")
