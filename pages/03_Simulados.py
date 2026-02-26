@@ -1,68 +1,52 @@
-# --- file: pages/03_Simulados.py
+# --- file: pages/03_Simulados.py ---
 import streamlit as st
-from services.auth import require_auth
-from services.database import get_supabase, run_query
+from services.auth import require_auth, logout
+from services.database import run_query, get_supabase
+from utils.components import inject_custom_css
 
+st.set_page_config(layout="wide", page_title="Meus Cadernos")
+inject_custom_css()
 require_auth()
-st.title("📂 Meus Simulados")
 
-tab_list, tab_create = st.tabs(["Meus Simulados", "Criar Novo"])
+with st.sidebar:
+    st.markdown(f"**Dr(a). {st.session_state.profile['full_name']}**")
+    if st.button("📊 Meu Desempenho", use_container_width=True): st.switch_page("pages/01_Dashboard.py")
+    if st.button("🔍 Explorar Questões", use_container_width=True): st.switch_page("pages/02_Banco_de_Questões.py")
+    if st.button("📝 Meus Cadernos", use_container_width=True): st.switch_page("pages/03_Simulados.py")
+    if st.button("Sair da Conta"): logout()
 
-with tab_list:
-    exams, _ = run_query("exams", filters={"user_id": st.session_state.user.id}, order=("created_at", "desc"))
-    if not exams:
-        st.info("Nenhum simulado criado.")
-    else:
-        for ex in exams:
-            with st.container(border=True):
-                c1, c2 = st.columns([4, 1])
-                c1.markdown(f"**{ex['title']}** ({ex['mode']})")
-                if c2.button("▶️ Abrir", key=ex['id']):
-                    # Cria uma nova tentativa (Attempt)
-                    client = get_supabase()
-                    att = client.table("attempts").insert({
+st.title("📂 Meus Cadernos de Questões")
+
+client = get_supabase()
+# Buscar os cadernos do usuário
+cadernos_res = client.table("exams").select("*").eq("user_id", st.session_state.user.id).order("created_at", desc=True).execute()
+cadernos = cadernos_res.data
+
+if not cadernos:
+    st.info("Você ainda não possui cadernos de questões. Vá em 'Explorar Questões' e selecione questões para criar um.")
+else:
+    for caderno in cadernos:
+        with st.container(border=True):
+            col_info, col_acao = st.columns([4, 1])
+            
+            with col_info:
+                st.markdown(f"### {caderno['title']}")
+                data_criacao = caderno['created_at'][:10]
+                st.caption(f"Criado em: {data_criacao}")
+            
+            with col_acao:
+                st.markdown("<br>", unsafe_allow_html=True)
+                if st.button("▶️ Resolver Caderno", key=f"play_{caderno['id']}", type="primary", use_container_width=True):
+                    # Criar a tentativa (Attempt)
+                    att_res = client.table("attempts").insert({
                         "user_id": st.session_state.user.id,
-                        "exam_id": ex['id']
+                        "exam_id": caderno['id']
                     }).execute()
                     
-                    st.session_state.active_attempt_id = att.data[0]['id']
+                    st.session_state.active_attempt_id = att_res.data[0]['id']
+                    st.session_state.current_q_idx = 0
                     st.switch_page("pages/04_Resolver.py")
-
-with tab_create:
-    st.subheader("Gerador Automático")
-    with st.form("create_exam"):
-        title = st.text_input("Nome do Simulado", "Simulado Personalizado")
-        mode = st.selectbox("Modo", ["treino", "prova"])
-        qtd = st.slider("Quantidade de Questões", 5, 50, 10)
-        
-        # Filtros para o gerador
-        d_opts = ["Cardiologia", "Pediatria", "Cirurgia"] # Deveria vir do banco
-        subjects = st.multiselect("Disciplinas", d_opts)
-        
-        if st.form_submit_button("Gerar Simulado"):
-            client = get_supabase()
-            
-            # 1. Busca questões aleatórias (Postgres random é melhor, mas aqui faremos simples)
-            # Para produção: usar .rpc() function no postgres para random sample
-            q_query = client.table("questions").select("id").eq("ativo", True)
-            if subjects: q_query = q_query.in_("disciplina", subjects)
-            q_res = q_query.limit(qtd).execute()
-            
-            if not q_res.data:
-                st.error("Sem questões para esses filtros.")
-            else:
-                # 2. Cria Exam
-                exam = client.table("exams").insert({
-                    "user_id": st.session_state.user.id,
-                    "title": title,
-                    "mode": mode,
-                    "is_generated": True
-                }).execute()
-                exam_id = exam.data[0]['id']
                 
-                # 3. Linka Questões
-                items = [{"exam_id": exam_id, "question_id": q['id']} for q in q_res.data]
-                client.table("exam_questions").insert(items).execute()
-                
-                st.success("Simulado criado com sucesso!")
-                st.rerun()
+                if st.button("🗑️ Excluir", key=f"del_{caderno['id']}", use_container_width=True):
+                    client.table("exams").delete().eq("id", caderno['id']).execute()
+                    st.rerun()
