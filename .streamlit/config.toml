@@ -1,0 +1,18 @@
+[theme]
+# Roxo Vibrante (Cor Principal do Estratégia)
+primaryColor = "#5E35B1"
+
+# Fundo Branco Gelo (Para não cansar a vista)
+backgroundColor = "#FDFDFD"
+
+# Fundo Cinza Claro (Para Sidebar e áreas secundárias)
+secondaryBackgroundColor = "#F3F5F7"
+
+# Cor do Texto (Preto Suave)
+textColor = "#2C3E50"
+
+# Fonte padrão moderna
+font = "sans serif"
+
+[server]
+enableCORS = false
