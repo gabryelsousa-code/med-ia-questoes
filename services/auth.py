@@ -2,46 +2,28 @@
 import streamlit as st
 from services.database import get_supabase
 
-def check_auth():
-    """Verifica sessão e carrega perfil"""
-    client = get_supabase()
-    if 'user' not in st.session_state:
-        st.session_state.user = None
-    if 'profile' not in st.session_state:
-        st.session_state.profile = None
+# ... (Mantenha as funções check_auth, login, logout, etc. que já existem) ...
 
-    # Tenta recuperar sessão persistente (opcional, complexo no Streamlit Cloud)
-    # Aqui focamos no login manual para simplicidade e segurança
-    return st.session_state.user is not None
-
-def login(email, password):
+def sign_up(email, password, full_name):
+    """Cria novo usuário no Supabase"""
     client = get_supabase()
     try:
-        auth_response = client.auth.sign_in_with_password({"email": email, "password": password})
-        st.session_state.user = auth_response.user
+        # Envia metadata (full_name) para o Trigger do SQL usar na tabela profiles
+        auth_response = client.auth.sign_up({
+            "email": email, 
+            "password": password,
+            "options": {
+                "data": {"full_name": full_name}
+            }
+        })
         
-        # Buscar perfil e role
-        profile_data = client.table('profiles').select('*').eq('id', auth_response.user.id).single().execute()
-        st.session_state.profile = profile_data.data
-        return True
+        # Se o Supabase estiver configurado para confirmar email, o user vem, mas session é None
+        if auth_response.user and auth_response.user.identities:
+            return True, "Conta criada com sucesso! Se necessário, verifique seu e-mail."
+        elif auth_response.user and not auth_response.user.identities:
+             return False, "Este e-mail já está cadastrado."
+        else:
+            return False, "Erro desconhecido ao criar conta."
+            
     except Exception as e:
-        st.error(f"Falha no login: {e}")
-        return False
-
-def logout():
-    client = get_supabase()
-    client.auth.sign_out()
-    st.session_state.user = None
-    st.session_state.profile = None
-    st.rerun()
-
-def require_auth():
-    if not check_auth():
-        st.warning("Faça login para continuar.")
-        st.stop()
-
-def require_admin():
-    require_auth()
-    if st.session_state.profile.get('role') != 'admin':
-        st.error("Acesso não autorizado.")
-        st.stop()
+        return False, f"Erro: {str(e)}"
