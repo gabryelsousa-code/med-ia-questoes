@@ -22,7 +22,26 @@ if not check_auth():
                     if login(email, password):
                         st.rerun()
             with tab2:
-                st.info("Entre em contato com admin para cadastro ou implemente sign_up na services/auth.py")
+                # --- CÓDIGO NOVO DE CADASTRO ---
+                new_name = st.text_input("Nome Completo")
+                new_email = st.text_input("E-mail para cadastro")
+                new_password = st.text_input("Senha (mín. 6 caracteres)", type="password")
+                
+                if st.button("Criar Conta", use_container_width=True):
+                    if len(new_password) < 6:
+                        st.error("A senha precisa ter pelo menos 6 caracteres.")
+                    elif not new_email or not new_name:
+                        st.error("Preencha todos os campos.")
+                    else:
+                        # Importando a função nova aqui
+                        from services.auth import sign_up 
+                        
+                        sucesso, mensagem = sign_up(new_email, new_password, new_name)
+                        if sucesso:
+                            st.success(mensagem)
+                            st.info("Agora faça login na aba 'Entrar'.")
+                        else:
+                            st.error(mensagem)
 
 else:
     # Redireciona para Dashboard se estiver logado
